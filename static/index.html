@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hydra — Claude Code Control Plane</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header class="container">
+        <nav>
+            <ul><li><strong class="logo">Hydra</strong></li></ul>
+            <ul><li id="connection-status" class="badge badge-gray">Connecting...</li></ul>
+        </nav>
+    </header>
+
+    <main class="container">
+        <section id="status-groups">
+            <div class="grid-header">
+                <span id="count-active" class="badge badge-green">0 Active</span>
+                <span id="count-waiting" class="badge badge-yellow">0 Waiting</span>
+                <span id="count-idle" class="badge badge-gray">0 Idle</span>
+                <span id="count-ended" class="badge badge-red">0 Ended</span>
+            </div>
+        </section>
+
+        <section id="sessions-grid" class="sessions-grid">
+            <p class="empty-state">No sessions yet. Start a Claude Code instance with hooks configured.</p>
+        </section>
+
+        <section>
+            <h3 class="section-title">Recent Events</h3>
+            <div id="event-log" class="event-log">
+                <p class="empty-state">Waiting for events...</p>
+            </div>
+        </section>
+    </main>
+
+    <script src="/app.js"></script>
+</body>
+</html>

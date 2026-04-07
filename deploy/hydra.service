@@ -1,0 +1,15 @@
+[Unit]
+Description=Hydra — Claude Code Control Plane
+After=network.target
+
+[Service]
+Type=simple
+User=giosu
+WorkingDirectory=/home/giosu/hydra
+EnvironmentFile=/home/giosu/hydra/.env
+ExecStart=/home/giosu/hydra/venv/bin/uvicorn server.app:app --host 0.0.0.0 --port 8400
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
