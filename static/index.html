@@ -35,6 +35,16 @@
                 <p class="empty-state">Waiting for events...</p>
             </div>
         </section>
+
+        <section class="sync-section">
+            <div class="sync-bar">
+                <div>
+                    <h3 class="section-title" style="margin-bottom:0">Config Sync</h3>
+                    <span id="sync-status" class="sync-detail">Loading...</span>
+                </div>
+                <button id="sync-btn" class="sync-btn" onclick="triggerSync()">Sync Now</button>
+            </div>
+        </section>
     </main>
 
     <script src="/app.js"></script>

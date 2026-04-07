@@ -1,15 +1,15 @@
 from fastapi import APIRouter
 
+from server.services import memory_sync
+
 router = APIRouter(prefix="/api/memory", tags=["memory"])
 
 
 @router.get("/status")
-async def memory_status():
-    # Placeholder for Phase 5
-    return {"status": "not_configured", "last_sync": None}
+async def get_memory_status():
+    return memory_sync.status()
 
 
 @router.post("/sync")
-async def memory_sync():
-    # Placeholder for Phase 5
-    return {"status": "not_configured", "message": "Memory sync not yet implemented"}
+async def trigger_memory_sync():
+    return await memory_sync.sync()

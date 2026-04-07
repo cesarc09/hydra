@@ -162,3 +162,27 @@
     color: #887a64;
     padding: 2rem;
 }
+
+/* Config sync section */
+.sync-section {
+    margin-top: 1.5rem;
+}
+.sync-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border: 1px solid #4a4540;
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    background: #353d3e;
+}
+.sync-detail {
+    font-size: 0.85em;
+    color: #a89a84;
+    font-family: monospace;
+}
+.sync-btn {
+    padding: 0.4em 1em;
+    font-size: 0.85em;
+    cursor: pointer;
+}

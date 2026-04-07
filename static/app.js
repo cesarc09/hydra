@@ -210,10 +210,49 @@ function timeAgo(iso) {
     return `${Math.floor(diff / 86400)}d ago`;
 }
 
+// --- Config sync ---
+
+async function fetchSyncStatus() {
+    try {
+        const res = await fetch(`${API}/memory/status`);
+        const data = await res.json();
+        const el = document.getElementById("sync-status");
+        if (data.status === "not_configured") {
+            el.textContent = "Not configured — set HYDRA_CONFIG_REPO in .env";
+        } else if (data.last_sync) {
+            const suffix = data.last_error ? ` (error: ${data.last_error})` : "";
+            el.textContent = `Last sync: ${timeAgo(data.last_sync)} — ${data.repo}${suffix}`;
+        } else {
+            el.textContent = `Repo: ${data.repo} — not synced yet`;
+        }
+    } catch (e) {
+        console.error("Failed to fetch sync status:", e);
+    }
+}
+
+async function triggerSync() {
+    const btn = document.getElementById("sync-btn");
+    const el = document.getElementById("sync-status");
+    btn.disabled = true;
+    btn.textContent = "Syncing...";
+    try {
+        const res = await fetch(`${API}/memory/sync`, { method: "POST" });
+        const data = await res.json();
+        el.textContent = data.message || data.status;
+        fetchSyncStatus();
+    } catch (e) {
+        el.textContent = "Sync failed: " + e.message;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = "Sync Now";
+    }
+}
+
 // --- Init ---
 
 fetchSessions();
 connectSSE();
+fetchSyncStatus();
 
-// Refresh sessions every 30s as a fallback
 setInterval(fetchSessions, 30000);
+setInterval(fetchSyncStatus, 60000);
