@@ -1,0 +1,23 @@
+{
+  "_comment": "Maps instance_id to editor settings for deep-linking changed files. Local type currently handles Windows/Git Bash paths. Native Linux local paths are TODO.",
+  "default": {
+    "editor": "vscode",
+    "type": "local"
+  },
+  "instances": {
+    "windows-vscode": {
+      "editor": "vscode",
+      "type": "local"
+    },
+    "wsl-main": {
+      "editor": "vscode",
+      "type": "wsl",
+      "distro": "Ubuntu"
+    },
+    "ssh-devbox": {
+      "editor": "vscode",
+      "type": "ssh-remote",
+      "host": "devbox"
+    }
+  }
+}

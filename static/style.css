@@ -119,9 +119,46 @@
     font-size: 0.8em;
     color: #887a64;
 }
+.session-card .files-count.clickable {
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 2px;
+}
+.session-card .files-count.clickable:hover {
+    color: #D9CAB3;
+}
 .session-card .remote-link {
     font-size: 0.8em;
     text-align: right;
+}
+
+/* Expandable file list */
+.files-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    padding: 0.5rem 0;
+    font-size: 0.8em;
+}
+.files-list.hidden {
+    display: none;
+}
+.file-link {
+    display: inline-block;
+    padding: 0.15em 0.5em;
+    background: #2C3233;
+    border: 1px solid #4a4540;
+    border-radius: 4px;
+    color: #D9CAB3;
+    font-family: monospace;
+    font-size: 0.95em;
+    text-decoration: none;
+}
+a.file-link:hover {
+    background: #3a4445;
+    border-color: #6b6358;
+    color: #ede4d4;
 }
 
 /* Tool name in last-activity line */

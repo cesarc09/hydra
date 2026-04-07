@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .env
+editors.json
 hydra.db
 venv/
 .claude/
