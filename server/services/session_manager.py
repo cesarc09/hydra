@@ -50,6 +50,16 @@ async def handle_event(event: HookEvent, instance_id: str):
     now = _now()
     summary = _summarize_tool_input(event)
 
+    # Ensure session row exists (handles missed SessionStart)
+    await db.execute(
+        """INSERT INTO sessions
+           (session_id, instance_id, status, cwd, model,
+            started_at, last_event_at, files_changed)
+           VALUES (?, ?, 'active', ?, ?, ?, ?, '[]')
+           ON CONFLICT(session_id) DO NOTHING""",
+        (event.session_id, instance_id, event.cwd, event.model, now, now),
+    )
+
     match event.hook_event_name:
         case "SessionStart":
             # Upsert session
