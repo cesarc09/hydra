@@ -9,9 +9,9 @@ pytestmark = pytest.mark.asyncio
 async def test_memory_status_not_configured(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
-    import server.config as config_module
+    import server.services.memory_sync as sync_module
 
-    monkeypatch.setattr(config_module, "CONFIG_REPO_PATH", "")
+    monkeypatch.setattr(sync_module, "CONFIG_REPO_PATH", "")
     res = await client.get("/api/memory/status")
     data = res.json()
     assert data["status"] == "not_configured"

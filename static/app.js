@@ -185,10 +185,12 @@ function renderEventLog() {
     log.innerHTML = eventLog.map((e) => {
         const time = new Date(e.received_at).toLocaleTimeString();
         const detail = e.tool_input_summary ? escHtml(truncate(e.tool_input_summary, 80)) : "";
+        const shortSession = e.session_id ? e.session_id.slice(0, 8) : "—";
         return `
             <div class="event-row">
                 <span class="event-time">${time}</span>
-                <span class="event-instance">${escHtml(e.instance_id)}</span>
+                <span class="event-session">${shortSession}</span>
+                <span class="event-instance">${escHtml(e.instance_id || "—")}</span>
                 <span class="event-name">${escHtml(e.event_name)}</span>
                 <span class="event-detail">${e.tool_name ? escHtml(e.tool_name) + " " : ""}${detail}</span>
             </div>

@@ -190,6 +190,7 @@ a.file-link:hover {
     border-bottom: 1px solid #353d3e;
 }
 .event-row .event-time { color: #887a64; min-width: 80px; }
+.event-row .event-session { color: #6b7280; min-width: 70px; font-size: 0.9em; }
 .event-row .event-instance { font-weight: 600; min-width: 140px; color: #D9CAB3; }
 .event-row .event-name { min-width: 120px; color: #a89a84; }
 .event-row .event-detail { color: #887a64; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
