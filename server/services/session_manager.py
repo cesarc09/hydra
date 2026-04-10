@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from server.db import get_db
-from server.models import HookEvent, SessionState
+from server.models import HookEvent
 
 # SSE subscribers: list of asyncio.Queue that receive new events
 _subscribers: list[asyncio.Queue] = []
@@ -27,7 +27,7 @@ async def _broadcast(data: dict):
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _summarize_tool_input(event: HookEvent) -> str | None:
@@ -55,7 +55,8 @@ async def handle_event(event: HookEvent, instance_id: str):
             # Upsert session
             await db.execute(
                 """INSERT INTO sessions
-                   (session_id, instance_id, status, cwd, model, started_at, last_event_at, files_changed)
+                   (session_id, instance_id, status, cwd, model,
+                    started_at, last_event_at, files_changed)
                    VALUES (?, ?, 'active', ?, ?, ?, ?, '[]')
                    ON CONFLICT(session_id) DO UPDATE SET
                      status='active', cwd=?, model=?, last_event_at=?""",
@@ -66,7 +67,8 @@ async def handle_event(event: HookEvent, instance_id: str):
 
         case "SessionEnd":
             await db.execute(
-                "UPDATE sessions SET status='ended', last_event_at=?, end_reason=? WHERE session_id=?",
+                "UPDATE sessions SET status='ended', last_event_at=?,"
+                " end_reason=? WHERE session_id=?",
                 (now, event.source, event.session_id),
             )
 
@@ -87,18 +89,18 @@ async def handle_event(event: HookEvent, instance_id: str):
             if event.tool_name in ("Write", "Edit") and event.tool_input:
                 fp = event.tool_input.get("file_path", "")
                 if fp:
-                    row = await db.execute_fetchall(
+                    rows = list(await db.execute_fetchall(
                         "SELECT files_changed FROM sessions WHERE session_id=?",
                         (event.session_id,),
-                    )
-                    if row:
-                        files = json.loads(row[0][0] or "[]")
+                    ))
+                    if rows:
+                        files = json.loads(rows[0][0] or "[]")
                         if fp not in files:
                             files.append(fp)
                             updates["files_changed"] = json.dumps(files)
 
             set_clause = ", ".join(f"{k}=?" for k in updates)
-            values = list(updates.values()) + [event.session_id]
+            values = [*updates.values(), event.session_id]
             await db.execute(
                 f"UPDATE sessions SET {set_clause} WHERE session_id=?",
                 values,
@@ -113,7 +115,8 @@ async def handle_event(event: HookEvent, instance_id: str):
         case "Notification":
             if event.notification_type == "idle_prompt":
                 await db.execute(
-                    "UPDATE sessions SET status='waiting_input', last_event_at=? WHERE session_id=?",
+                    "UPDATE sessions SET status='waiting_input',"
+                    " last_event_at=? WHERE session_id=?",
                     (now, event.session_id),
                 )
 
@@ -125,7 +128,9 @@ async def handle_event(event: HookEvent, instance_id: str):
 
     # Record the event
     await db.execute(
-        """INSERT INTO events (session_id, instance_id, event_name, tool_name, tool_input_summary, received_at)
+        """INSERT INTO events
+           (session_id, instance_id, event_name, tool_name,
+            tool_input_summary, received_at)
            VALUES (?, ?, ?, ?, ?, ?)""",
         (event.session_id, instance_id, event.hook_event_name,
          event.tool_name, summary, now),

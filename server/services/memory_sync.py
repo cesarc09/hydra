@@ -1,6 +1,6 @@
 import asyncio
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from server.config import CONFIG_REPO_PATH
 
@@ -10,7 +10,7 @@ _last_error: str | None = None
 
 def _run_git(args: list[str], cwd: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["git"] + args,
+        ["git", *args],
         cwd=cwd,
         capture_output=True,
         text=True,
@@ -30,7 +30,7 @@ async def sync() -> dict:
         result = await loop.run_in_executor(
             None, _run_git, ["pull", "--ff-only"], CONFIG_REPO_PATH
         )
-        _last_sync = datetime.now(timezone.utc).isoformat()
+        _last_sync = datetime.now(UTC).isoformat()
 
         if result.returncode == 0:
             _last_error = None

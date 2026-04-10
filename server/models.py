@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class HookEvent(BaseModel):
     """Incoming hook event from a Claude Code instance."""
+    model_config = ConfigDict(extra="allow")
+
     session_id: str
     hook_event_name: str
     cwd: str = ""
@@ -22,9 +23,6 @@ class HookEvent(BaseModel):
     message: str | None = None  # Notification message
     notification_type: str | None = None
     agent_type: str | None = None
-
-    class Config:
-        extra = "allow"
 
 
 class SessionState(BaseModel):

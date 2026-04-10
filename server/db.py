@@ -1,6 +1,6 @@
 import aiosqlite
 
-from server.config import DB_PATH, BASE_DIR
+from server.config import BASE_DIR, DB_PATH
 
 _db: aiosqlite.Connection | None = None
 
