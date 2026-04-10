@@ -3,6 +3,7 @@ const MAX_EVENTS = 100;
 
 let sessions = {};
 let eventLog = [];
+let editorConfig = { default: { editor: "vscode", type: "local" }, instances: {} };
 
 // --- Fetch initial state ---
 
@@ -142,7 +143,21 @@ function renderCard(s) {
         : "—";
 
     const ago = timeAgo(s.last_event_at);
-    const filesCount = Array.isArray(s.files_changed) ? s.files_changed.length : 0;
+    const files = Array.isArray(s.files_changed) ? s.files_changed : [];
+    const filesCount = files.length;
+
+    const filesList = files.map((f) => {
+        const uri = editorUri(s.instance_id, f);
+        const name = fileName(f);
+        if (uri) {
+            return `<a class="file-link" href="${escHtml(uri)}" title="${escHtml(f)}">${escHtml(name)}</a>`;
+        }
+        return `<span class="file-link" title="${escHtml(f)}">${escHtml(name)}</span>`;
+    }).join("");
+
+    const filesToggle = filesCount > 0
+        ? `<span class="files-count clickable" onclick="toggleFiles('${s.session_id}')">${filesCount} file${filesCount !== 1 ? "s" : ""} changed</span>`
+        : `<span class="files-count">0 files changed</span>`;
 
     return `
         <article class="session-card status-${s.status}">
@@ -152,8 +167,9 @@ function renderCard(s) {
             </div>
             <div class="cwd" title="${escHtml(s.cwd)}">${escHtml(shortCwd)}</div>
             <div class="last-activity"><span>${lastActivity}</span><span class="time-ago">${ago}</span></div>
+            ${filesCount > 0 ? `<div id="files-${s.session_id}" class="files-list hidden">${filesList}</div>` : ""}
             <div class="card-footer">
-                <span class="files-count">${filesCount} file${filesCount !== 1 ? "s" : ""} changed</span>
+                ${filesToggle}
                 <a class="remote-link" href="https://claude.ai/code" target="_blank" rel="noopener">Open Remote Control</a>
             </div>
         </article>
@@ -210,6 +226,57 @@ function timeAgo(iso) {
     return `${Math.floor(diff / 86400)}d ago`;
 }
 
+// --- Editor deep-links ---
+
+async function fetchEditorConfig() {
+    try {
+        const res = await fetch(`${API}/editors`);
+        editorConfig = await res.json();
+    } catch (e) {
+        console.error("Failed to fetch editor config:", e);
+    }
+}
+
+// Convert Git Bash path (/c/Users/...) to Windows path (C:/Users/...)
+function toWindowsPath(p) {
+    const m = p.match(/^\/([a-zA-Z])\/(.*)/);
+    return m ? `${m[1].toUpperCase()}:/${m[2]}` : p;
+}
+
+function editorUri(instanceId, filePath) {
+    const cfg = editorConfig.instances[instanceId] || editorConfig.default || {};
+    const editor = cfg.editor || "vscode";
+    const type = cfg.type || "local";
+    const scheme = editor === "cursor" ? "cursor" : "vscode";
+
+    if (type === "wsl" && cfg.distro) {
+        return `${scheme}://vscode-remote/wsl+${cfg.distro}${filePath}`;
+    }
+
+    if (type === "ssh-remote" && cfg.host) {
+        return `${scheme}://vscode-remote/ssh-remote+${cfg.host}${filePath}`;
+    }
+
+    if (type === "local") {
+        return `${scheme}://file/${toWindowsPath(filePath)}`;
+    }
+
+    if (editor === "jetbrains") {
+        return `jetbrains://open?file=${encodeURIComponent(filePath)}`;
+    }
+
+    return null;
+}
+
+function fileName(path) {
+    return path.split("/").pop() || path;
+}
+
+function toggleFiles(sessionId) {
+    const el = document.getElementById(`files-${sessionId}`);
+    if (el) el.classList.toggle("hidden");
+}
+
 // --- Config sync ---
 
 async function fetchSyncStatus() {
@@ -250,6 +317,7 @@ async function triggerSync() {
 
 // --- Init ---
 
+fetchEditorConfig();
 fetchSessions();
 connectSSE();
 fetchSyncStatus();
