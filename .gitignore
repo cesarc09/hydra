@@ -5,3 +5,5 @@ editors.json
 hydra.db
 venv/
 .claude/
+archive/
+.pytest_cache/
