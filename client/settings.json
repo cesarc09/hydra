@@ -1,0 +1,140 @@
+{
+  "autoUpdatesChannel": "latest",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd ~/projects/hydra && git pull --ff-only 2>/dev/null && bash client/setup.sh 2>/dev/null || true",
+            "timeout": 10
+          },
+          {
+            "type": "http",
+            "url": "http://localhost:8400/api/hooks/event",
+            "timeout": 5,
+            "headers": {
+              "Authorization": "Bearer $HYDRA_AUTH_TOKEN",
+              "X-Instance-Id": "$HYDRA_INSTANCE_ID"
+            },
+            "allowedEnvVars": ["HYDRA_AUTH_TOKEN", "HYDRA_INSTANCE_ID"]
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://localhost:8400/api/hooks/event",
+            "timeout": 5,
+            "headers": {
+              "Authorization": "Bearer $HYDRA_AUTH_TOKEN",
+              "X-Instance-Id": "$HYDRA_INSTANCE_ID"
+            },
+            "allowedEnvVars": ["HYDRA_AUTH_TOKEN", "HYDRA_INSTANCE_ID"]
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://localhost:8400/api/hooks/event",
+            "timeout": 5,
+            "headers": {
+              "Authorization": "Bearer $HYDRA_AUTH_TOKEN",
+              "X-Instance-Id": "$HYDRA_INSTANCE_ID"
+            },
+            "allowedEnvVars": ["HYDRA_AUTH_TOKEN", "HYDRA_INSTANCE_ID"]
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|Bash",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://localhost:8400/api/hooks/event",
+            "timeout": 5,
+            "headers": {
+              "Authorization": "Bearer $HYDRA_AUTH_TOKEN",
+              "X-Instance-Id": "$HYDRA_INSTANCE_ID"
+            },
+            "allowedEnvVars": ["HYDRA_AUTH_TOKEN", "HYDRA_INSTANCE_ID"]
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://localhost:8400/api/hooks/event",
+            "timeout": 5,
+            "headers": {
+              "Authorization": "Bearer $HYDRA_AUTH_TOKEN",
+              "X-Instance-Id": "$HYDRA_INSTANCE_ID"
+            },
+            "allowedEnvVars": ["HYDRA_AUTH_TOKEN", "HYDRA_INSTANCE_ID"]
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://localhost:8400/api/hooks/event",
+            "timeout": 5,
+            "headers": {
+              "Authorization": "Bearer $HYDRA_AUTH_TOKEN",
+              "X-Instance-Id": "$HYDRA_INSTANCE_ID"
+            },
+            "allowedEnvVars": ["HYDRA_AUTH_TOKEN", "HYDRA_INSTANCE_ID"]
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://localhost:8400/api/hooks/event",
+            "timeout": 5,
+            "headers": {
+              "Authorization": "Bearer $HYDRA_AUTH_TOKEN",
+              "X-Instance-Id": "$HYDRA_INSTANCE_ID"
+            },
+            "allowedEnvVars": ["HYDRA_AUTH_TOKEN", "HYDRA_INSTANCE_ID"]
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "idle_prompt",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://localhost:8400/api/hooks/event",
+            "timeout": 5,
+            "headers": {
+              "Authorization": "Bearer $HYDRA_AUTH_TOKEN",
+              "X-Instance-Id": "$HYDRA_INSTANCE_ID"
+            },
+            "allowedEnvVars": ["HYDRA_AUTH_TOKEN", "HYDRA_INSTANCE_ID"]
+          }
+        ]
+      }
+    ]
+  }
+}
