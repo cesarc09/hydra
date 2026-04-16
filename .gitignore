@@ -3,6 +3,7 @@ __pycache__/
 .env
 editors.json
 hydra.db
+client/claude-md.md
 venv/
 .claude/
 archive/

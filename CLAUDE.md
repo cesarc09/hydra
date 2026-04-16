@@ -50,6 +50,11 @@ server/
     projects.py       — CRUD /api/projects (project registry)
   services/
     session_manager.py — State machine, SSE broadcast, DB writes
+client/
+  hydra_cli/          — Thin CLI client (pip install -e client/)
+  claude-md.md        — Personal CLAUDE.md (gitignored, lives in Hydra DB)
+  settings.json       — Claude Code settings with Hydra hooks
+  setup.sh            — Deploys settings + installs CLI
 static/
   index.html, app.js, style.css — Dashboard (single-page, no build step)
 tests/

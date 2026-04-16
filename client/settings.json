@@ -10,6 +10,11 @@
             "timeout": 10
           },
           {
+            "type": "command",
+            "command": "curl -sf -H \"Authorization: Bearer $HYDRA_AUTH_TOKEN\" \"${HYDRA_URL:-http://localhost:8400}/api/config/claude-md\" -o /tmp/hydra-claude-md.tmp && mv /tmp/hydra-claude-md.tmp ~/.claude/CLAUDE.md || true",
+            "timeout": 5
+          },
+          {
             "type": "http",
             "url": "http://localhost:8400/api/hooks/event",
             "timeout": 5,
