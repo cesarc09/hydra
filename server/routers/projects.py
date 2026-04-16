@@ -12,7 +12,7 @@ router = APIRouter(
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 @router.get("")

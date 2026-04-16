@@ -27,7 +27,7 @@ async def _broadcast(data: dict):
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 def _summarize_tool_input(event: HookEvent) -> str | None:
@@ -175,7 +175,7 @@ async def get_all_sessions() -> list[dict]:
 async def get_session_events(session_id: str, limit: int = 50) -> list[dict]:
     db = await get_db()
     rows = await db.execute_fetchall(
-        "SELECT * FROM events WHERE session_id=? ORDER BY received_at DESC LIMIT ?",
+        "SELECT * FROM events WHERE session_id=? ORDER BY id DESC LIMIT ?",
         (session_id, limit),
     )
     return [dict(row) for row in rows]

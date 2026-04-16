@@ -39,15 +39,23 @@ done
 
 echo ""
 echo "Claude config deployed from $SCRIPT_DIR (mode: $MODE)"
+
+# Install hydra CLI (editable, so git pull keeps it current)
+if command -v pip >/dev/null 2>&1; then
+    pip install -e "$SCRIPT_DIR" --quiet 2>/dev/null
+    echo "  Installed: hydra CLI"
+fi
+
 echo ""
 
 # Check Hydra env vars
 if [ -z "$HYDRA_INSTANCE_ID" ]; then
-    echo "NOTE: Hydra hooks are configured but HYDRA_INSTANCE_ID is not set."
+    echo "NOTE: Hydra hooks are configured but required env vars may not be set."
     echo "Add these to your shell profile (~/.bashrc or ~/.zshrc):"
     echo ""
     echo "  export HYDRA_INSTANCE_ID=\"$(hostname)\"    # unique name for this machine"
     echo "  export HYDRA_AUTH_TOKEN=\"your-token\"       # must match Hydra server .env"
+    echo "  export HYDRA_URL=\"https://hydra.example.com\"  # omit for localhost:8400"
     echo ""
 else
     echo "Hydra instance: $HYDRA_INSTANCE_ID"

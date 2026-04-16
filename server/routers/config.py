@@ -19,7 +19,7 @@ async def get_claude_md():
 @router.put("/claude-md")
 async def put_claude_md(request: Request):
     content = (await request.body()).decode("utf-8")
-    now = datetime.now(UTC).isoformat()
+    now = datetime.now(UTC).replace(microsecond=0).isoformat()
     db = await get_db()
     await db.execute(
         """INSERT INTO claude_md (id, content, updated_at) VALUES (1, ?, ?)
