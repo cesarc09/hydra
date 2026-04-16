@@ -5,8 +5,6 @@ from httpx import AsyncClient
 
 pytestmark = pytest.mark.asyncio
 
-
-AUTH_TOKEN = ""  # No auth in tests (HYDRA_AUTH_TOKEN defaults to "")
 HEADERS = {"X-Instance-Id": "test-machine"}
 
 
@@ -31,9 +29,7 @@ async def test_hook_returns_200(client: AsyncClient):
 
 
 async def test_hook_rejects_bad_auth(client: AsyncClient, monkeypatch: pytest.MonkeyPatch):
-    import server.routers.hooks as hooks_module
-
-    monkeypatch.setattr(hooks_module, "AUTH_TOKEN", "secret-token")
+    monkeypatch.setattr("server.config.AUTH_TOKEN", "secret-token")
     body = hook_body("s1", "SessionStart")
     res = await client.post(
         "/api/hooks/event",
@@ -44,9 +40,7 @@ async def test_hook_rejects_bad_auth(client: AsyncClient, monkeypatch: pytest.Mo
 
 
 async def test_hook_accepts_valid_auth(client: AsyncClient, monkeypatch: pytest.MonkeyPatch):
-    import server.routers.hooks as hooks_module
-
-    monkeypatch.setattr(hooks_module, "AUTH_TOKEN", "secret-token")
+    monkeypatch.setattr("server.config.AUTH_TOKEN", "secret-token")
     body = hook_body("s1", "SessionStart", cwd="/tmp")
     res = await client.post(
         "/api/hooks/event",

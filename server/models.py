@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+MemoryType = Literal["user", "feedback", "project", "reference"]
 
 
 class HookEvent(BaseModel):
@@ -47,3 +49,54 @@ class EventRecord(BaseModel):
     tool_name: str | None = None
     tool_input_summary: str | None = None
     received_at: str = ""
+
+
+# --- Memory ---
+
+
+class MemoryCreate(BaseModel):
+    name: str
+    description: str = ""
+    type: MemoryType
+    body: str = ""
+
+
+class MemoryUpdate(BaseModel):
+    """Partial update — only non-None fields are applied."""
+    name: str | None = None
+    description: str | None = None
+    type: MemoryType | None = None
+    body: str | None = None
+
+
+class MemoryItem(BaseModel):
+    id: int
+    name: str
+    description: str
+    type: MemoryType
+    body: str
+    created_at: str
+    updated_at: str
+
+
+# --- Projects ---
+
+
+class ProjectCreate(BaseModel):
+    slug: str
+    path: str
+    description: str = ""
+
+
+class ProjectUpdate(BaseModel):
+    """Partial update — only non-None fields are applied."""
+    path: str | None = None
+    description: str | None = None
+
+
+class ProjectItem(BaseModel):
+    slug: str
+    path: str
+    description: str
+    created_at: str
+    updated_at: str

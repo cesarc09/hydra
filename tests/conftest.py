@@ -4,8 +4,7 @@ import aiosqlite
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-import server.routers.hooks as hooks_module
-import server.services.session_manager as session_manager_module
+import server.db as db_module
 from server.app import app
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schema.sql"
@@ -20,12 +19,10 @@ async def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     await conn.executescript(SCHEMA_PATH.read_text())
     await conn.commit()
 
-    async def _get_test_db():
-        return conn
-
-    # Patch where get_db is actually called (imported name in session_manager)
-    monkeypatch.setattr(session_manager_module, "get_db", _get_test_db)
-    monkeypatch.setattr(hooks_module, "AUTH_TOKEN", "")
+    # Inject test DB — get_db() reads _db from the module, so all importers see it
+    monkeypatch.setattr(db_module, "_db", conn)
+    # Disable auth for all tests by default
+    monkeypatch.setattr("server.config.AUTH_TOKEN", "")
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:

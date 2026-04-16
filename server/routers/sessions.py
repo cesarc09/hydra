@@ -1,9 +1,10 @@
 import json
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from sse_starlette.sse import EventSourceResponse
 
+from server.auth import require_auth
 from server.config import EDITORS_PATH
 from server.services.session_manager import (
     get_all_sessions,
@@ -12,7 +13,9 @@ from server.services.session_manager import (
     unsubscribe,
 )
 
-router = APIRouter(prefix="/api", tags=["sessions"])
+router = APIRouter(
+    prefix="/api", tags=["sessions"], dependencies=[Depends(require_auth)]
+)
 
 
 @router.get("/sessions")
