@@ -6,6 +6,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "hydra sync --pull --cwd \"$PWD\" >/dev/null 2>&1 || true",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "cd ~/projects/hydra && git pull --ff-only 2>/dev/null && bash client/setup.sh 2>/dev/null || true",
             "timeout": 10
           },
@@ -79,6 +84,11 @@
     "Stop": [
       {
         "hooks": [
+          {
+            "type": "command",
+            "command": "hydra sync --push --cwd \"$PWD\" >/dev/null 2>&1 || true",
+            "timeout": 5
+          },
           {
             "type": "http",
             "url": "__HYDRA_URL__/api/hooks/event",
