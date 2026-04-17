@@ -124,6 +124,25 @@ def test_roundtrip_preserves_content(tmp_path: Path):
     assert sync_mod.fields_differ(original, parsed) == []
 
 
+def test_memory_dir_for_cwd_posix(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    d = sync_mod.memory_dir_for_cwd("/home/giosue/projects/hydra")
+    assert d == tmp_path / ".claude" / "projects" / "-home-giosue-projects-hydra" / "memory"
+
+
+def test_memory_dir_for_cwd_windows(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Claude Code encodes `:` and `\\` as `-`. Before this fix the slug only
+    replaced `/`, yielding a nonsense dir on Windows."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    # os.path.abspath is a no-op on absolute Windows-style paths when run on
+    # Linux, so it's safe to drive this test cross-platform with a raw string.
+    monkeypatch.setattr(sync_mod.os.path, "abspath", lambda p: p)
+    d = sync_mod.memory_dir_for_cwd(r"C:\Users\giosu\projects\pcb")
+    assert (
+        d == tmp_path / ".claude" / "projects" / "C--Users-giosu-projects-pcb" / "memory"
+    )
+
+
 def test_scope_rule():
     assert sync_mod.scope_is_global("user")
     assert sync_mod.scope_is_global("feedback")
