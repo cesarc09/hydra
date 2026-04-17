@@ -17,6 +17,10 @@ fi
 
 mkdir -p "$CLAUDE_DIR"
 
+# Hydra server URL. Set HYDRA_URL in the shell (or in a .env sourced before
+# running setup.sh); defaults to localhost for a Pi running hydra locally.
+HYDRA_URL="${HYDRA_URL:-http://localhost:8400}"
+
 for file in settings.json; do
     src="$SCRIPT_DIR/$file"
     target="$CLAUDE_DIR/$file"
@@ -28,14 +32,15 @@ for file in settings.json; do
         fi
     fi
 
-    if [ "$MODE" = "link" ]; then
-        ln -sf "$src" "$target"
-        echo "  Linked: $file -> $target"
-    else
-        cp "$src" "$target"
-        echo "  Copied: $file -> $target"
-    fi
+    # settings.json is a template — substitute __HYDRA_URL__ at install time.
+    # Always materialize (link mode would leave placeholders unresolved).
+    sed "s|__HYDRA_URL__|${HYDRA_URL}|g" "$src" > "$target"
+    echo "  Installed: $file -> $target  (HYDRA_URL=${HYDRA_URL})"
 done
+
+if [ "$MODE" = "link" ]; then
+    echo "  Note: --link ignored for settings.json (it's a template)."
+fi
 
 echo ""
 echo "Claude config deployed from $SCRIPT_DIR (mode: $MODE)"

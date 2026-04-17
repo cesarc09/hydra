@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends
 from sse_starlette.sse import EventSourceResponse
 
-from server.auth import require_auth
+from server.auth import require_auth, require_auth_sse
 from server.config import EDITORS_PATH
 from server.services.session_manager import (
     get_all_sessions,
@@ -13,22 +13,20 @@ from server.services.session_manager import (
     unsubscribe,
 )
 
-router = APIRouter(
-    prefix="/api", tags=["sessions"], dependencies=[Depends(require_auth)]
-)
+router = APIRouter(prefix="/api", tags=["sessions"])
 
 
-@router.get("/sessions")
+@router.get("/sessions", dependencies=[Depends(require_auth)])
 async def list_sessions():
     return await get_all_sessions()
 
 
-@router.get("/sessions/{session_id}/events")
+@router.get("/sessions/{session_id}/events", dependencies=[Depends(require_auth)])
 async def session_events(session_id: str, limit: int = 50):
     return await get_session_events(session_id, limit)
 
 
-@router.get("/editors")
+@router.get("/editors", dependencies=[Depends(require_auth)])
 async def get_editors():
     path = Path(EDITORS_PATH)
     if path.exists():
@@ -36,7 +34,7 @@ async def get_editors():
     return {"default": {"editor": "vscode", "type": "local"}, "instances": {}}
 
 
-@router.get("/events/stream")
+@router.get("/events/stream", dependencies=[Depends(require_auth_sse)])
 async def event_stream():
     queue = subscribe()
 

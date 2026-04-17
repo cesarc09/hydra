@@ -21,8 +21,10 @@ async def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
     # Inject test DB — get_db() reads _db from the module, so all importers see it
     monkeypatch.setattr(db_module, "_db", conn)
-    # Disable auth for all tests by default
+    # Disable auth for all tests by default. require_auth fails closed when
+    # AUTH_TOKEN is empty unless ALLOW_NO_AUTH is set.
     monkeypatch.setattr("server.config.AUTH_TOKEN", "")
+    monkeypatch.setattr("server.config.ALLOW_NO_AUTH", True)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:

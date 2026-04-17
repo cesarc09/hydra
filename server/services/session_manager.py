@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from datetime import UTC, datetime
 
@@ -11,19 +12,27 @@ from server.models import HookEvent
 _subscribers: list[asyncio.Queue] = []
 
 
+_SUBSCRIBER_QUEUE_MAX = 1000
+
+
 def subscribe() -> asyncio.Queue:
-    q: asyncio.Queue = asyncio.Queue()
+    q: asyncio.Queue = asyncio.Queue(maxsize=_SUBSCRIBER_QUEUE_MAX)
     _subscribers.append(q)
     return q
 
 
 def unsubscribe(q: asyncio.Queue):
-    _subscribers.remove(q)
+    with contextlib.suppress(ValueError):
+        _subscribers.remove(q)
 
 
 async def _broadcast(data: dict):
-    for q in _subscribers:
-        await q.put(data)
+    # Iterate over a copy so we can drop slow subscribers mid-broadcast.
+    for q in list(_subscribers):
+        try:
+            q.put_nowait(data)
+        except asyncio.QueueFull:
+            unsubscribe(q)
 
 
 def _now() -> str:

@@ -4,12 +4,54 @@ const MAX_EVENTS = 100;
 let sessions = {};
 let eventLog = [];
 let editorConfig = { default: { editor: "vscode", type: "local" }, instances: {} };
+let authToken = localStorage.getItem("hydraToken") || "";
+
+// --- Auth ---
+
+function ensureToken() {
+    if (!authToken) {
+        const entered = (window.prompt("Enter Hydra auth token:") || "").trim();
+        if (entered) {
+            authToken = entered;
+            localStorage.setItem("hydraToken", authToken);
+        }
+    }
+    return authToken;
+}
+
+function clearToken() {
+    authToken = "";
+    localStorage.removeItem("hydraToken");
+}
+
+async function apiFetch(path, opts = {}) {
+    ensureToken();
+    const tokenUsed = authToken;
+    const headers = { ...(opts.headers || {}) };
+    if (tokenUsed) headers["Authorization"] = `Bearer ${tokenUsed}`;
+    let res = await fetch(path, { ...opts, headers });
+    if (res.status === 401) {
+        // Only re-prompt if no concurrent request already replaced the token.
+        // Without this check, N parallel 401s cause N prompts — even after the
+        // first prompt got the correct token.
+        if (authToken === tokenUsed) {
+            clearToken();
+            ensureToken();
+        }
+        if (authToken && authToken !== tokenUsed) {
+            const retryHeaders = { ...(opts.headers || {}), Authorization: `Bearer ${authToken}` };
+            res = await fetch(path, { ...opts, headers: retryHeaders });
+        }
+    }
+    return res;
+}
 
 // --- Fetch initial state ---
 
 async function fetchSessions() {
     try {
-        const res = await fetch(`${API}/sessions`);
+        const res = await apiFetch(`${API}/sessions`);
+        if (!res.ok) return;
         const data = await res.json();
         sessions = {};
         for (const s of data) {
@@ -25,7 +67,11 @@ async function fetchSessions() {
 
 function connectSSE() {
     const statusEl = document.getElementById("connection-status");
-    const source = new EventSource(`${API}/events/stream`);
+    ensureToken();
+    const url = authToken
+        ? `${API}/events/stream?token=${encodeURIComponent(authToken)}`
+        : `${API}/events/stream`;
+    const source = new EventSource(url);
 
     source.onopen = () => {
         statusEl.textContent = "Connected";
@@ -232,7 +278,8 @@ function timeAgo(iso) {
 
 async function fetchEditorConfig() {
     try {
-        const res = await fetch(`${API}/editors`);
+        const res = await apiFetch(`${API}/editors`);
+        if (!res.ok) return;
         editorConfig = await res.json();
     } catch (e) {
         console.error("Failed to fetch editor config:", e);
@@ -279,50 +326,11 @@ function toggleFiles(sessionId) {
     if (el) el.classList.toggle("hidden");
 }
 
-// --- Config sync ---
-
-async function fetchSyncStatus() {
-    try {
-        const res = await fetch(`${API}/memory/status`);
-        const data = await res.json();
-        const el = document.getElementById("sync-status");
-        if (data.status === "not_configured") {
-            el.textContent = "Not configured — set HYDRA_CONFIG_REPO in .env";
-        } else if (data.last_sync) {
-            const suffix = data.last_error ? ` (error: ${data.last_error})` : "";
-            el.textContent = `Last sync: ${timeAgo(data.last_sync)} — ${data.repo}${suffix}`;
-        } else {
-            el.textContent = `Repo: ${data.repo} — not synced yet`;
-        }
-    } catch (e) {
-        console.error("Failed to fetch sync status:", e);
-    }
-}
-
-async function triggerSync() {
-    const btn = document.getElementById("sync-btn");
-    const el = document.getElementById("sync-status");
-    btn.disabled = true;
-    btn.textContent = "Syncing...";
-    try {
-        const res = await fetch(`${API}/memory/sync`, { method: "POST" });
-        const data = await res.json();
-        el.textContent = data.message || data.status;
-        fetchSyncStatus();
-    } catch (e) {
-        el.textContent = "Sync failed: " + e.message;
-    } finally {
-        btn.disabled = false;
-        btn.textContent = "Sync Now";
-    }
-}
-
 // --- Init ---
 
+ensureToken();
 fetchEditorConfig();
 fetchSessions();
 connectSSE();
-fetchSyncStatus();
 
 setInterval(fetchSessions, 30000);
-setInterval(fetchSyncStatus, 60000);

@@ -16,7 +16,7 @@
           },
           {
             "type": "http",
-            "url": "http://localhost:8400/api/hooks/event",
+            "url": "__HYDRA_URL__/api/hooks/event",
             "timeout": 5,
             "headers": {
               "Authorization": "Bearer $HYDRA_AUTH_TOKEN",
@@ -32,7 +32,7 @@
         "hooks": [
           {
             "type": "http",
-            "url": "http://localhost:8400/api/hooks/event",
+            "url": "__HYDRA_URL__/api/hooks/event",
             "timeout": 5,
             "headers": {
               "Authorization": "Bearer $HYDRA_AUTH_TOKEN",
@@ -48,7 +48,7 @@
         "hooks": [
           {
             "type": "http",
-            "url": "http://localhost:8400/api/hooks/event",
+            "url": "__HYDRA_URL__/api/hooks/event",
             "timeout": 5,
             "headers": {
               "Authorization": "Bearer $HYDRA_AUTH_TOKEN",
@@ -65,7 +65,7 @@
         "hooks": [
           {
             "type": "http",
-            "url": "http://localhost:8400/api/hooks/event",
+            "url": "__HYDRA_URL__/api/hooks/event",
             "timeout": 5,
             "headers": {
               "Authorization": "Bearer $HYDRA_AUTH_TOKEN",
@@ -81,7 +81,7 @@
         "hooks": [
           {
             "type": "http",
-            "url": "http://localhost:8400/api/hooks/event",
+            "url": "__HYDRA_URL__/api/hooks/event",
             "timeout": 5,
             "headers": {
               "Authorization": "Bearer $HYDRA_AUTH_TOKEN",
@@ -97,7 +97,7 @@
         "hooks": [
           {
             "type": "http",
-            "url": "http://localhost:8400/api/hooks/event",
+            "url": "__HYDRA_URL__/api/hooks/event",
             "timeout": 5,
             "headers": {
               "Authorization": "Bearer $HYDRA_AUTH_TOKEN",
@@ -113,7 +113,7 @@
         "hooks": [
           {
             "type": "http",
-            "url": "http://localhost:8400/api/hooks/event",
+            "url": "__HYDRA_URL__/api/hooks/event",
             "timeout": 5,
             "headers": {
               "Authorization": "Bearer $HYDRA_AUTH_TOKEN",
@@ -130,7 +130,7 @@
         "hooks": [
           {
             "type": "http",
-            "url": "http://localhost:8400/api/hooks/event",
+            "url": "__HYDRA_URL__/api/hooks/event",
             "timeout": 5,
             "headers": {
               "Authorization": "Bearer $HYDRA_AUTH_TOKEN",
