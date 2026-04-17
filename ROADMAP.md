@@ -2,49 +2,55 @@
 
 Features organized by theme, roughly prioritized within each section.
 
+## Context System
+
+- **Memory dashboard UI** — browse, search, and filter memories by project or type. View bodies, maybe inline edit. Without this the DB is only reachable via CLI.
+- **Conflict resolution UI** — when `hydra sync` flags a conflict, surface it on the dashboard with a side-by-side diff; pick a side or merge. Today conflicts block sync silently from the user's perspective until they run the CLI manually.
+- **Auto-register project from cwd** — during `hydra sync --push`, if no project matches the cwd, prompt (or auto-register) with a sensible slug from the dirname. Removes a manual `hydra project create` step per machine.
+- **Fold CLAUDE.md into `hydra sync`** — currently pulled separately via curl in the SessionStart hook. Would simplify onboarding by removing one hook.
+- **Memory history** — keep edit history rather than clobbering on upsert. Enables rollback and answers "what did this memory say last week?"
+
 ## Editor Integration
 
-- **Deep-link to changed files** — Click a changed file in the dashboard to open it in VS Code, JetBrains, or Cursor. Map instance_id → editor URI scheme (e.g., `vscode://file/path`, `vscode://vscode-remote/ssh-remote+host/path`).
-- **Inline diff viewer** — Store `old_string`/`new_string` from Edit tool_input and render diffs in the dashboard. Review changes without opening an editor.
+- **Inline diff viewer** — store `old_string`/`new_string` from Edit tool_input and render diffs in the dashboard. Review changes without opening an editor.
 
 ## Notifications
 
 - **Push notifications for waiting_input** — Browser Notification API, Discord/Slack webhook, Telegram bot, or ntfy.sh. Alert when a session needs user input.
-- **Configurable notification rules** — Choose which events trigger notifications (e.g., only errors, only waiting, all state changes).
+- **Configurable notification rules** — pick which events trigger notifications (only errors, only waiting, all state changes).
 
 ## Cost & Usage Tracking
 
-- **Token/cost dashboard** — Track total_cost_usd, input/output tokens per session. Aggregate per day, per instance.
-- **Rate limit monitoring** — Show 5-hour and 7-day rate limit usage across instances.
-- **Usage charts** — Simple time-series visualization of cost and token usage.
+- **Token/cost dashboard** — total_cost_usd, input/output tokens per session, aggregated per day + instance.
+- **Rate limit monitoring** — show 5-hour and 7-day rate limit usage across instances.
+- **Usage charts** — time-series visualization of cost and tokens.
 
 ## Session Intelligence
 
-- **Task board** — Aggregate TaskCreated/TaskCompleted events into a kanban-style view showing what each agent is working on.
-- **Transcript viewer** — Fetch and render conversation transcripts from instances on the same network. Read-only session replay.
-- **Session history** — Searchable archive of ended sessions with timeline view.
+- **Task board** — aggregate TaskCreated/TaskCompleted events into a kanban view showing what each agent is working on.
+- **Transcript viewer** — fetch and render conversation transcripts from instances on the same network. Read-only session replay.
+- **Session history** — searchable archive of ended sessions with timeline view.
 
 ## Orchestration
 
-- **Dispatch tasks** — Text input on dashboard to send a task to an idle instance via Claude Code Channels/MCP.
-- **Scheduled sweeps** — Cron-style recurring tasks (e.g., "run tests on all repos every morning").
-- **Pipeline chains** — Event-driven workflows: when one instance finishes, trigger a task on another.
-
-## Cross-Host Access
-
-- **Public access via Cloudflare Tunnel or Tailscale Funnel** — HTTPS without exposing the Pi directly.
-- **PWA support** — Installable on phone with offline shell, push notification support.
-- **Custom domain** — `hydra.yourdomain.com` accessible from anywhere.
+- **Dispatch tasks** — text input on the dashboard to send a task to an idle instance (via MCP or Claude Code Channels).
+- **Scheduled sweeps** — cron-style recurring tasks ("run tests on all repos every morning").
+- **Pipeline chains** — event-driven workflows where one instance finishing triggers work on another.
 
 ## Open Source & Extensibility
 
-- **Zero-config CLI** — `hydra init` generates hook config, `.env`, and starts the server.
+- **Zero-config bootstrap** — `hydra init` generates `.env`, systemd unit, and starts the server.
 - **Plugin system** — Python functions that react to hook events for custom automation.
 - **Multi-user support** — API keys per user, each seeing their own instances.
 
-## Polish
+## Hardening & Performance
 
-- **Auto-cleanup** — Purge events older than N days.
-- **Event rate limiting** — Debounce rapid PostToolUse events.
-- **Mobile-responsive layout** — Phone-friendly card layout.
-- **Favicon with status indicator** — Glanceable tab status.
+- **Event retention** — prune events older than N days; current table grows forever.
+- **DB backup** — nightly snapshot of `hydra.db` to a safe location.
+- **Pagination** — `/api/memory` and `/api/projects` list endpoints.
+- **Per-session SSE subscriptions** — today every event fans out to every connected dashboard regardless of relevance.
+- **Index on `sessions.status`** — speeds up dashboard filtering once there are many sessions.
+- **Reduce N+1 in session_manager** — `files_changed` fetch per PostToolUse deserializes the full session row; batch or cache.
+- **Rate limiting on hook ingestion** — defense against runaway event loops from a misbehaving client.
+- **PWA / mobile layout** — installable dashboard, push notifications, phone-friendly card layout.
+- **Favicon with status indicator** — glanceable tab status.

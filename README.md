@@ -1,119 +1,136 @@
 # Hydra — Claude Code Control Plane
 
-An observation layer for all your Claude Code instances, across every machine.
+One server that holds your memories and CLAUDE.md, and watches every session — across every machine you use Claude Code on.
 
 ## Why
 
-If you use Claude Code on multiple machines — a Windows desktop, WSL, SSH servers — each instance is isolated. You can't see what's running where, which sessions are waiting for input, or what files just changed on another machine.
+Two things about Claude Code hurt once you use it on more than one machine.
 
-Hydra gives you a single dashboard that watches all of them in real time. Combined with a shared config repo (for permissions, rules, and hooks), it forms a unified control plane: one place to observe, one place to configure.
+**Every session starts stateless.** Context you've established — preferences, project conventions, decisions already made — doesn't carry forward to the next session, let alone the next machine. You re-brief, over and over, and that friction is what keeps agents out of workflows where they'd otherwise fit.
+
+**Every session runs in isolation.** You can't tell at a glance which session on which machine is waiting for input, what just got edited, or whether something is stuck.
+
+Hydra is one server that solves both. A memory store and CLAUDE.md that travel with you across machines — pulled when a session starts, pushed when it ends — and a live dashboard that watches every session in real time. Same server, same bearer token; the two are independent, so observation keeps working if sync fails, and vice versa.
 
 ```
-┌─────────────────────────────────────────────────┐
-│              Hydra Server                        │
-│  ┌──────────────┐  ┌──────┐  ┌──────────────┐  │
-│  │ Hook API     │  │  DB  │  │ Config Sync  │  │
-│  └──────┬───────┘  └──────┘  └──────────────┘  │
-│         │                                       │
-│  ┌──────┴───────┐                               │
-│  │ Dashboard    │ ← browser (any device)        │
-│  │ (live SSE)   │                               │
-│  └──────────────┘                               │
-└─────────────────────────────────────────────────┘
-          ▲ HTTP hooks
-          │
-    ┌─────┴──────────────────────────────┐
-    │         │           │        │     │
-  Win/VS    WSL        SSH-1    SSH-2  SSH-3
+┌──────────────────────────────────────────────────────────────┐
+│                    Hydra Server (24/7)                        │
+│                                                               │
+│     Memory store  ·  CLAUDE.md  ·  Project registry           │
+│                            │                                  │
+│                  Live dashboard (SSE)                         │
+└──────────────┬──────────────────────────────┬────────────────┘
+               │ SessionStart: pull           │ Stop/SessionEnd: push
+               │ (memories, CLAUDE.md)        │ (new memories, events)
+               │                              │
+       ┌───────┴──────┬───────────┬──────────┴────┐
+       │              │           │               │
+     Mac            WSL        SSH-1           SSH-2
+  Claude Code    Claude Code  Claude Code    Claude Code
 ```
 
 ## How It Works
 
-1. Each Claude Code instance has HTTP hooks in `settings.json` that POST events to the Hydra server
-2. The server tracks session state and stores events in SQLite
-3. The dashboard shows live session cards via Server-Sent Events
-4. A shared config repo keeps rules, permissions, and hooks consistent across machines
+Two loops run continuously:
 
-### Session States
+**Context loop** — `hydra sync` reconciles each machine's local memory dir (`~/.claude/projects/<dir>/memory/`) with the server. A SessionStart hook runs `hydra sync --pull` before Claude sees the session; a Stop hook runs `hydra sync --push` at turn end. Memories are typed: `user`/`feedback` are global (available everywhere), `project`/`reference` are pinned to the project the cwd maps to.
 
-| Event | Sets state to |
-|-------|--------------|
-| SessionStart / UserPromptSubmit / PostToolUse | `active` |
-| Stop | `idle` |
-| Notification (idle_prompt) | `waiting_input` |
-| SessionEnd | `ended` |
+**Observation loop** — every Claude Code tool call fires an HTTP hook to `/api/hooks/event`. The server tracks session state transitions (active / idle / waiting_input / ended) and broadcasts them over Server-Sent Events to any open dashboard.
+
+Same bearer token, same server, but the two loops don't depend on each other.
 
 ## Setup
 
 ### Server
 
-Run on any always-on machine (Raspberry Pi, home server, VPS):
+Run on any always-on machine: laptop, VPS, home server, Raspberry Pi.
 
 ```bash
 git clone <repo-url> ~/hydra && cd ~/hydra
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
-cp .env.example .env
-# Edit .env: set HYDRA_AUTH_TOKEN to a random string
+export HYDRA_AUTH_TOKEN=$(openssl rand -hex 32)
+export HYDRA_BIND_HOST=127.0.0.1    # loopback-only; reverse-proxy terminates TLS
 
-uvicorn server.app:app --host 0.0.0.0 --port 8400
+uvicorn server.app:app --host "$HYDRA_BIND_HOST" --port 8400
 ```
 
-For persistent deployment: `sudo cp deploy/hydra.service /etc/systemd/system/` and enable it.
+The server fails closed if `HYDRA_AUTH_TOKEN` is unset. For local dev without a token, set `HYDRA_ALLOW_NO_AUTH=1`. For production, run under a service manager (systemd, launchd, Docker) and put the server behind whatever reverse-proxy or TLS termination you prefer — Hydra doesn't care.
 
-### Each Claude Code Instance
-
-Set these environment variables:
+### Client (each machine that runs Claude Code)
 
 ```bash
-export HYDRA_INSTANCE_ID="windows-vscode"  # unique per machine
-export HYDRA_AUTH_TOKEN="<same token as server>"
+git clone <repo-url> ~/projects/hydra
+export HYDRA_URL=https://your-hydra-server       # or http://localhost:8400
+export HYDRA_AUTH_TOKEN=...                      # must match the server
+export HYDRA_INSTANCE_ID="$(hostname)"
+bash ~/projects/hydra/client/setup.sh
 ```
 
-Then configure hooks in `~/.claude/settings.json` to POST events to `http://<hydra-server>:8400/api/hooks/event`. See the config repo for a working example.
+`setup.sh` installs `~/.claude/settings.json` with hooks pointing at `$HYDRA_URL` and installs the `hydra` CLI (`pip install -e`). Put the exports in your shell profile so hooks see them in every session.
 
 ### Verify
 
-1. Start the Hydra server
-2. Open `http://<server>:8400` in a browser
-3. Start a Claude Code session on any configured machine
-4. The session appears on the dashboard
+1. Start the server.
+2. Open `$HYDRA_URL/` in a browser, paste the token when prompted.
+3. Start a Claude Code session on any configured machine.
+4. The session appears on the dashboard within a second.
 
-## Config Sync
+## Reaching the Server from Remote Machines
 
-Hydra can pull a shared config repo on demand (via the dashboard's "Sync Now" button). Each instance can also pull on session start via a command hook. This keeps `CLAUDE.md`, `settings.json`, and permission rules in sync across machines.
+Pick whichever fits your threat model and infrastructure:
 
-The config repo is independent of Hydra — it works on its own as a git-synced dotfiles approach. Hydra simply adds visibility into sync status.
+- **LAN only** — direct IP or `.local` hostname. Fine for a home setup where every client is on the same network.
+- **Tailscale / WireGuard** — zero-config mesh VPN, every client reaches the server on a private address. Nothing exposed to the internet.
+- **Cloudflare Tunnel** — outbound connection from the server to Cloudflare's edge. Works through CGNAT, no port forwarding. HTTPS terminated at the edge.
+- **VPS with a reverse proxy** — nginx or Caddy in front of `127.0.0.1:8400`, with Let's Encrypt. Straightforward if the server has a public IP.
 
-## Network
+Regardless of network path, keep `HYDRA_BIND_HOST=127.0.0.1` and terminate TLS *somewhere* — the bearer token alone isn't a substitute for transport encryption.
 
-All instances must be able to reach the Hydra server. Options:
-- **LAN:** Direct IP or hostname (e.g., `pi.local:8400`)
-- **Tailscale:** Zero-config mesh VPN across machines
-- **Cloudflare Tunnel:** Public HTTPS without port forwarding
+## CLI Reference
 
-Do not expose the server directly to the internet with just a bearer token.
+```
+hydra sync [--pull|--push|--dry-run] [--cwd PATH]
+                      # Reconcile local memory dir with server. Bidirectional
+                      # by default; flags restrict direction. Conflicts are
+                      # flagged, not merged.
+hydra memory list | get ID | create ... | update ID ... | delete ID
+hydra project list | get SLUG | create --slug --path | update SLUG | delete
+hydra config get-claude-md | put-claude-md FILE
+```
+
+Global auth via `HYDRA_AUTH_TOKEN` and `HYDRA_URL` env vars.
+
+## Session State Machine
+
+| Event | Status |
+|-------|--------|
+| SessionStart / UserPromptSubmit / PostToolUse | `active` |
+| Stop | `idle` |
+| Notification (idle_prompt) | `waiting_input` |
+| SessionEnd | `ended` |
+
+Session cards on the dashboard are grouped by status and updated live via SSE.
 
 ## Development
 
 ```bash
 pip install -r requirements-dev.txt
-
-# Run tests
 python -m pytest tests/ -v
-
-# Lint + type check
-ruff check server/ tests/
-pyright server/ tests/
+ruff check server/ tests/ client/
+pyright server/ tests/ client/
 ```
+
+All three must pass before committing.
 
 ## Tech Stack
 
 | Component | Choice |
 |-----------|--------|
-| Server | Python 3.13, FastAPI |
-| Database | SQLite (WAL mode) |
+| Server | Python 3.13, FastAPI, aiosqlite |
+| Database | SQLite (WAL mode, partial unique indexes for memory scoping) |
 | Live updates | Server-Sent Events |
-| Frontend | Vanilla HTML/JS, Pico CSS |
-| Auth | Bearer token |
+| Frontend | Vanilla HTML/JS, Pico CSS (no build step) |
+| Auth | Bearer token (fail-closed) |
+| Client CLI | Python stdlib (`urllib`) |
