@@ -7,6 +7,7 @@ import json
 import sys
 
 from hydra_cli import api
+from hydra_cli.sync import cmd_sync
 
 
 def _die(status: int, body: str) -> None:
@@ -57,11 +58,13 @@ def cmd_memory_create(args: argparse.Namespace) -> None:
     }
     if args.desc:
         payload["description"] = args.desc
+    if args.project:
+        payload["project_slug"] = args.project
     body_text = _read_body(args)
     if body_text:
         payload["body"] = body_text
     status, body = api.post("/api/memory", payload)
-    if status != 201:
+    if status != 200:
         _die(status, body)
     _print_json(json.loads(body))
 
@@ -183,6 +186,7 @@ def build_parser() -> argparse.ArgumentParser:
     mc.add_argument("--type", required=True, choices=["user", "feedback", "project", "reference"])
     mc.add_argument("--desc", default="")
     mc.add_argument("--body-file")
+    mc.add_argument("--project", help="project slug to pin this memory to (omit for global)")
 
     mu = mem_sub.add_parser("update")
     mu.add_argument("id", type=int)
@@ -225,6 +229,13 @@ def build_parser() -> argparse.ArgumentParser:
     cp = cfg_sub.add_parser("put-claude-md")
     cp.add_argument("file")
 
+    # --- sync (no subcommand; flags drive direction) ---
+    sync = sub.add_parser("sync", help="reconcile memories between local dir and hydra")
+    sync.add_argument("--pull", action="store_true", help="download only")
+    sync.add_argument("--push", action="store_true", help="upload only")
+    sync.add_argument("--cwd", help="override cwd (hooks pass $PWD)")
+    sync.add_argument("--dry-run", action="store_true")
+
     return parser
 
 
@@ -241,6 +252,7 @@ DISPATCH = {
     ("project", "delete"): cmd_project_delete,
     ("config", "get-claude-md"): cmd_config_get_claude_md,
     ("config", "put-claude-md"): cmd_config_put_claude_md,
+    ("sync", None): cmd_sync,
 }
 
 
@@ -251,11 +263,17 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    if not args.group or not args.command:
+    if not args.group:
         parser.print_help()
         sys.exit(1)
 
-    handler = DISPATCH.get((args.group, args.command))
+    # `sync` is a leaf command; other groups require a subcommand.
+    command = getattr(args, "command", None)
+    if args.group != "sync" and not command:
+        parser.print_help()
+        sys.exit(1)
+
+    handler = DISPATCH.get((args.group, command))
     if handler:
         handler(args)
     else:
