@@ -59,6 +59,7 @@ class MemoryCreate(BaseModel):
     description: str = ""
     type: MemoryType
     body: str = ""
+    project_slug: str | None = None
 
 
 class MemoryUpdate(BaseModel):
@@ -67,6 +68,7 @@ class MemoryUpdate(BaseModel):
     description: str | None = None
     type: MemoryType | None = None
     body: str | None = None
+    project_slug: str | None = None
 
 
 class MemoryItem(BaseModel):
@@ -75,6 +77,7 @@ class MemoryItem(BaseModel):
     description: str
     type: MemoryType
     body: str
+    project_slug: str | None = None
     created_at: str
     updated_at: str
 

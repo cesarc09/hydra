@@ -33,17 +33,6 @@ CREATE TABLE IF NOT EXISTS claude_md (
     updated_at TEXT NOT NULL
 );
 
--- Cross-machine memory store
-CREATE TABLE IF NOT EXISTS memories (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    type TEXT NOT NULL CHECK (type IN ('user', 'feedback', 'project', 'reference')),
-    body TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
 -- Project registry
 CREATE TABLE IF NOT EXISTS projects (
     slug TEXT PRIMARY KEY,
@@ -52,3 +41,22 @@ CREATE TABLE IF NOT EXISTS projects (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- Cross-machine memory store. project_slug NULL => global; otherwise pinned
+-- to a project. Partial unique indexes enforce that global names are unique
+-- and (name, project_slug) pairs are unique within a project.
+CREATE TABLE IF NOT EXISTS memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    type TEXT NOT NULL CHECK (type IN ('user', 'feedback', 'project', 'reference')),
+    body TEXT NOT NULL DEFAULT '',
+    project_slug TEXT REFERENCES projects(slug) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_global
+    ON memories(name) WHERE project_slug IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_project
+    ON memories(name, project_slug) WHERE project_slug IS NOT NULL;

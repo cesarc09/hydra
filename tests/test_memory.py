@@ -15,7 +15,7 @@ async def _create_memory(client: AsyncClient, **overrides) -> dict:
         **overrides,
     }
     res = await client.post("/api/memory", json=payload)
-    assert res.status_code == 201
+    assert res.status_code == 200
     return res.json()
 
 
@@ -99,6 +99,56 @@ async def test_invalid_type_rejected(client: AsyncClient):
     assert res.status_code == 422
 
 
+# --- Upsert (same-name) ---
+
+
+async def test_upsert_replaces_existing_global(client: AsyncClient):
+    first = await _create_memory(client, name="shared", body="v1")
+    second = await _create_memory(client, name="shared", body="v2", description="new")
+    assert first["id"] == second["id"]
+    assert second["body"] == "v2"
+    assert second["description"] == "new"
+
+    res = await client.get("/api/memory")
+    assert len(res.json()) == 1
+
+
+async def test_upsert_distinct_when_project_differs(client: AsyncClient):
+    await _register_project(client, "alpha", "/tmp/alpha")
+    await _register_project(client, "beta", "/tmp/beta")
+
+    a = await _create_memory(client, name="shared", project_slug="alpha", body="A")
+    b = await _create_memory(client, name="shared", project_slug="beta", body="B")
+    assert a["id"] != b["id"]
+    assert a["project_slug"] == "alpha"
+    assert b["project_slug"] == "beta"
+
+
+# --- Filtered list ---
+
+
+async def test_list_filtered_by_project(client: AsyncClient):
+    await _register_project(client, "alpha", "/tmp/alpha")
+    await _create_memory(client, name="g1", type="user")  # global
+    await _create_memory(client, name="p1", type="project", project_slug="alpha")
+
+    res = await client.get("/api/memory?project_slug=alpha")
+    names = [m["name"] for m in res.json()]
+    assert names == ["p1"]
+
+
+async def test_list_filtered_by_project_with_globals(client: AsyncClient):
+    await _register_project(client, "alpha", "/tmp/alpha")
+    await _register_project(client, "beta", "/tmp/beta")
+    await _create_memory(client, name="g1", type="user")
+    await _create_memory(client, name="p_alpha", type="project", project_slug="alpha")
+    await _create_memory(client, name="p_beta", type="project", project_slug="beta")
+
+    res = await client.get("/api/memory?project_slug=alpha&include_global=true")
+    names = sorted(m["name"] for m in res.json())
+    assert names == ["g1", "p_alpha"]
+
+
 # --- Auth ---
 
 
@@ -106,3 +156,11 @@ async def test_memory_auth_required(client: AsyncClient, monkeypatch: pytest.Mon
     monkeypatch.setattr("server.config.AUTH_TOKEN", "secret")
     res = await client.get("/api/memory")
     assert res.status_code == 401
+
+
+# --- Helpers ---
+
+
+async def _register_project(client: AsyncClient, slug: str, path: str) -> None:
+    res = await client.post("/api/projects", json={"slug": slug, "path": path})
+    assert res.status_code == 201
