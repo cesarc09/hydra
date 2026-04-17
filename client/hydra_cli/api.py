@@ -29,6 +29,7 @@ def _request(
     url = f"{_base_url()}{path}"
     req = urllib.request.Request(url, method=method, data=body)
     req.add_header("Content-Type", content_type)
+    req.add_header("User-Agent", "hydra-cli/0.1")
     token = _token()
     if token:
         req.add_header("Authorization", f"Bearer {token}")
