@@ -33,6 +33,9 @@ def _request(
     token = _token()
     if token:
         req.add_header("Authorization", f"Bearer {token}")
+    instance_id = os.environ.get("HYDRA_INSTANCE_ID", "").strip()
+    if instance_id:
+        req.add_header("X-Instance-Id", instance_id)
     try:
         with urllib.request.urlopen(req) as resp:
             return resp.status, resp.read().decode("utf-8")

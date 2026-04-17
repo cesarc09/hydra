@@ -43,6 +43,17 @@ async def _migrate(conn: aiosqlite.Connection) -> None:
             "ON memories(name, project_slug) WHERE project_slug IS NOT NULL"
         )
 
+    # projects.path → project_paths(slug, instance_id='legacy', path)
+    cursor = await conn.execute("PRAGMA table_info(projects)")
+    proj_cols = {row[1] for row in await cursor.fetchall()}
+    if "path" in proj_cols:
+        await conn.execute(
+            "INSERT OR IGNORE INTO project_paths "
+            "(slug, instance_id, path, created_at, updated_at) "
+            "SELECT slug, 'legacy', path, created_at, updated_at FROM projects"
+        )
+        await conn.execute("ALTER TABLE projects DROP COLUMN path")
+
 
 async def close_db():
     global _db

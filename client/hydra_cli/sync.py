@@ -126,17 +126,52 @@ def _api_error(status: int, body: str) -> str:
         return body
 
 
-def resolve_project_slug(cwd: str) -> str | None:
-    """Look up the project slug for cwd in the Hydra projects registry."""
+def resolve_project_slug(cwd: str, *, auto_attach: bool = True) -> str | None:
+    """Look up the project slug for cwd in the Hydra projects registry.
+
+    Matches against any registered path for any machine — a project may live
+    at different filesystem paths on different machines, and the cwd itself
+    is unambiguous enough that instance_id scoping is unnecessary here.
+
+    If no registered path matches and `auto_attach` is set, tries the cwd's
+    basename as a slug: if a project with that slug already exists, attaches
+    the cwd as a new path on this machine. Brand-new slugs are never created
+    automatically — that requires `hydra project attach --slug …` or
+    `hydra project create`.
+    """
     status, body = api.get("/api/projects")
     if status != 200:
         raise RuntimeError(f"Failed to fetch projects: {_api_error(status, body)}")
     projects = json.loads(body)
     target = os.path.abspath(cwd)
     for p in projects:
-        if os.path.abspath(p["path"]) == target:
-            return p["slug"]
+        for entry in p.get("paths", []):
+            if os.path.abspath(entry["path"]) == target:
+                return p["slug"]
+
+    if not auto_attach:
+        return None
+
+    basename = os.path.basename(target)
+    if basename and basename in {p["slug"] for p in projects}:
+        attach_project_path(basename, target)
+        print(
+            f"  auto-attached {target} to existing project '{basename}'",
+            file=sys.stderr,
+        )
+        return basename
     return None
+
+
+def attach_project_path(slug: str, path: str) -> dict[str, Any]:
+    """POST the (slug, cwd) pair to the registry. Idempotent: creates the
+    project if the slug is new, otherwise adds/updates this machine's path."""
+    status, body = api.post("/api/projects", {"slug": slug, "path": path})
+    if status not in (200, 201):
+        raise RuntimeError(
+            f"Failed to attach '{slug}' → {path}: {_api_error(status, body)}"
+        )
+    return json.loads(body)
 
 
 def fetch_server_memories(project_slug: str | None) -> list[dict[str, Any]]:

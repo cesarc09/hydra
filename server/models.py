@@ -93,13 +93,17 @@ class ProjectCreate(BaseModel):
 
 class ProjectUpdate(BaseModel):
     """Partial update — only non-None fields are applied."""
-    path: str | None = None
     description: str | None = None
+
+
+class ProjectPath(BaseModel):
+    instance_id: str
+    path: str
 
 
 class ProjectItem(BaseModel):
     slug: str
-    path: str
     description: str
+    paths: list[ProjectPath] = Field(default_factory=list)
     created_at: str
     updated_at: str

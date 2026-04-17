@@ -33,7 +33,18 @@ class FakeAPI:
     # Mimic hydra_cli.api.get (full path including query string)
     def get(self, path: str) -> tuple[int, str]:
         if path == "/api/projects":
-            return 200, json.dumps(self.projects)
+            # Normalize old-shape test fixtures ({slug, path}) to the new
+            # {slug, paths:[{instance_id, path}]} shape the client expects.
+            normalized = []
+            for p in self.projects:
+                if "paths" in p:
+                    normalized.append(p)
+                else:
+                    normalized.append({
+                        "slug": p["slug"],
+                        "paths": [{"instance_id": "test", "path": p["path"]}],
+                    })
+            return 200, json.dumps(normalized)
         if path == "/api/memory":
             return 200, json.dumps(self.memories)
         if path.startswith("/api/memory?"):
@@ -50,6 +61,23 @@ class FakeAPI:
         return 404, json.dumps({"detail": f"no fake handler for {path}"})
 
     def post(self, path: str, payload: dict) -> tuple[int, str]:
+        if path == "/api/projects":
+            # Idempotent project upsert — mirrors the server. If the slug
+            # exists, append/update the path row; otherwise create a new entry.
+            slug = payload["slug"]
+            new_path = payload["path"]
+            for p in self.projects:
+                if p["slug"] == slug:
+                    paths = p.setdefault("paths", [])
+                    if not any(e["path"] == new_path for e in paths):
+                        paths.append({"instance_id": "test", "path": new_path})
+                    return 201, json.dumps(p)
+            created = {
+                "slug": slug,
+                "paths": [{"instance_id": "test", "path": new_path}],
+            }
+            self.projects.append(created)
+            return 201, json.dumps(created)
         if path == "/api/memory":
             key = (payload["name"], payload.get("project_slug"))
             for i, existing in enumerate(self.memories):
@@ -141,6 +169,69 @@ def test_memory_dir_for_cwd_windows(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert (
         d == tmp_path / ".claude" / "projects" / "C--Users-giosu-projects-pcb" / "memory"
     )
+
+
+def test_resolve_project_slug_matches_any_registered_path(
+    fake_api: FakeAPI, monkeypatch: pytest.MonkeyPatch
+):
+    """A project with paths from two machines resolves from either cwd."""
+    fake_api.projects = [{
+        "slug": "hydra",
+        "paths": [
+            {"instance_id": "vps", "path": "/home/giosue/projects/hydra"},
+            {"instance_id": "laptop", "path": r"C:\Users\giosu\projects\hydra"},
+        ],
+    }]
+    assert sync_mod.resolve_project_slug(
+        "/home/giosue/projects/hydra", auto_attach=False
+    ) == "hydra"
+    # Stub abspath so the backslash path doesn't get mangled on Linux
+    monkeypatch.setattr(sync_mod.os.path, "abspath", lambda p: p)
+    assert sync_mod.resolve_project_slug(
+        r"C:\Users\giosu\projects\hydra", auto_attach=False
+    ) == "hydra"
+    assert sync_mod.resolve_project_slug(
+        "/unregistered/path", auto_attach=False
+    ) is None
+
+
+def test_resolve_project_slug_auto_attaches_on_basename_match(
+    fake_api: FakeAPI, capsys: pytest.CaptureFixture[str]
+):
+    """Cwd whose basename matches an existing slug gets auto-attached."""
+    fake_api.projects = [{
+        "slug": "hydra",
+        "paths": [{"instance_id": "vps", "path": "/home/giosue/projects/hydra"}],
+    }]
+    slug = sync_mod.resolve_project_slug("/Users/me/work/hydra")
+    assert slug == "hydra"
+    # Attached via POST — fake api's post-handler records projects, not
+    # project_paths, so we just verify a post happened by listing /api/projects
+    # and checking the message
+    err = capsys.readouterr().err
+    assert "auto-attached" in err
+
+
+def test_resolve_project_slug_no_auto_attach_when_basename_unknown(
+    fake_api: FakeAPI,
+):
+    """Cwd whose basename doesn't match any existing slug returns None —
+    never auto-creates a brand-new slug."""
+    fake_api.projects = [{
+        "slug": "hydra",
+        "paths": [{"instance_id": "vps", "path": "/home/giosue/projects/hydra"}],
+    }]
+    assert sync_mod.resolve_project_slug("/Users/me/scratch/unrelated") is None
+
+
+def test_resolve_project_slug_auto_attach_disabled(fake_api: FakeAPI):
+    fake_api.projects = [{
+        "slug": "hydra",
+        "paths": [{"instance_id": "vps", "path": "/home/giosue/projects/hydra"}],
+    }]
+    assert sync_mod.resolve_project_slug(
+        "/Users/me/work/hydra", auto_attach=False
+    ) is None
 
 
 def test_scope_rule():

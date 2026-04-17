@@ -33,14 +33,27 @@ CREATE TABLE IF NOT EXISTS claude_md (
     updated_at TEXT NOT NULL
 );
 
--- Project registry
+-- Project registry. Paths live in project_paths so the same project can
+-- exist at different filesystem paths on different machines.
 CREATE TABLE IF NOT EXISTS projects (
     slug TEXT PRIMARY KEY,
-    path TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- One canonical path per (slug, instance_id). Re-registering the same slug
+-- from a machine updates that row; a new machine adds a new row.
+CREATE TABLE IF NOT EXISTS project_paths (
+    slug TEXT NOT NULL REFERENCES projects(slug) ON DELETE CASCADE,
+    instance_id TEXT NOT NULL,
+    path TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (slug, instance_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_paths_path ON project_paths(path);
 
 -- Cross-machine memory store. project_slug NULL => global; otherwise pinned
 -- to a project. Partial unique indexes enforce that global names are unique

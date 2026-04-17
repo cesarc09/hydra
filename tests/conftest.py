@@ -16,6 +16,7 @@ async def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     db_path = str(tmp_path / "test.db")
     conn = await aiosqlite.connect(db_path)
     conn.row_factory = aiosqlite.Row
+    await conn.execute("PRAGMA foreign_keys=ON")
     await conn.executescript(SCHEMA_PATH.read_text())
     await conn.commit()
 

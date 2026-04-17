@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
 from hydra_cli import api
@@ -146,6 +147,22 @@ def cmd_project_delete(args: argparse.Namespace) -> None:
         _die(status, body)
 
 
+def cmd_project_attach(args: argparse.Namespace) -> None:
+    """Register the current cwd to a slug. Uses cwd basename if --slug is
+    omitted. Creates the project if the slug is new, otherwise adds/updates
+    this machine's path row for that slug."""
+    cwd = os.path.abspath(args.cwd or os.getcwd())
+    slug = args.slug or os.path.basename(cwd)
+    if not slug:
+        print("Cannot derive slug from empty basename", file=sys.stderr)
+        sys.exit(1)
+    payload = {"slug": slug, "path": cwd}
+    status, body = api.post("/api/projects", payload)
+    if status != 201:
+        _die(status, body)
+    _print_json(json.loads(body))
+
+
 # --- config commands ---
 
 
@@ -220,6 +237,13 @@ def build_parser() -> argparse.ArgumentParser:
     pd = proj_sub.add_parser("delete")
     pd.add_argument("slug")
 
+    pa = proj_sub.add_parser(
+        "attach",
+        help="register cwd to a slug (idempotent; creates the slug if new)",
+    )
+    pa.add_argument("--slug", help="target slug (defaults to cwd basename)")
+    pa.add_argument("--cwd", help="path to attach (defaults to current dir)")
+
     # --- config ---
     cfg = sub.add_parser("config")
     cfg_sub = cfg.add_subparsers(dest="command")
@@ -250,6 +274,7 @@ DISPATCH = {
     ("project", "create"): cmd_project_create,
     ("project", "update"): cmd_project_update,
     ("project", "delete"): cmd_project_delete,
+    ("project", "attach"): cmd_project_attach,
     ("config", "get-claude-md"): cmd_config_get_claude_md,
     ("config", "put-claude-md"): cmd_config_put_claude_md,
     ("sync", None): cmd_sync,
