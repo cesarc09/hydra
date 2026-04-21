@@ -36,7 +36,7 @@ Onboard this machine as a Hydra client. Hydra is a cross-machine control plane f
 
    Upserts are by `(name, project_slug)`, so re-runs are safe. Report per-project counts.
 
-6. Verify round-trip on one project: `cd <project-path> && hydra sync --pull` should report `0 pulled, 0 conflicts`. Then `hydra memory list` should show the full set.
+6. Verify convergence on one project: `cd <project-path> && hydra sync` (bidirectional) should report `0 pushed, 0 pulled, 0 conflicts` — that's the real idempotency check. (`--pull` is an unconditional overwrite, so it always reports `pulled = <server count>`, which isn't what we want for verification.) Then `hydra memory list` should show the full set.
 
 7. Tell me to start a fresh Claude Code session in one of the registered projects. The SessionStart hook should pull the latest memories + CLAUDE.md, and the session should appear on the dashboard within a second or two.
 
