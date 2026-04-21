@@ -21,6 +21,10 @@ mkdir -p "$CLAUDE_DIR"
 # running setup.sh); defaults to localhost for a Pi running hydra locally.
 HYDRA_URL="${HYDRA_URL:-http://localhost:8400}"
 
+# Repo root is the parent of client/. Baked into the rendered settings.json
+# so the SessionStart hook can `cd` back here regardless of where you cloned.
+HYDRA_REPO_PATH="$(dirname "$SCRIPT_DIR")"
+
 for file in settings.json; do
     src="$SCRIPT_DIR/$file"
     target="$CLAUDE_DIR/$file"
@@ -32,10 +36,12 @@ for file in settings.json; do
         fi
     fi
 
-    # settings.json is a template — substitute __HYDRA_URL__ at install time.
+    # settings.json is a template — substitute placeholders at install time.
     # Always materialize (link mode would leave placeholders unresolved).
-    sed "s|__HYDRA_URL__|${HYDRA_URL}|g" "$src" > "$target"
-    echo "  Installed: $file -> $target  (HYDRA_URL=${HYDRA_URL})"
+    sed -e "s|__HYDRA_URL__|${HYDRA_URL}|g" \
+        -e "s|__HYDRA_REPO_PATH__|${HYDRA_REPO_PATH}|g" \
+        "$src" > "$target"
+    echo "  Installed: $file -> $target  (HYDRA_URL=${HYDRA_URL}, repo=${HYDRA_REPO_PATH})"
 done
 
 if [ "$MODE" = "link" ]; then

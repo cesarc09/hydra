@@ -46,7 +46,7 @@ Same bearer token, same server, but the two loops don't depend on each other.
 Run on any always-on machine: laptop, VPS, home server, Raspberry Pi.
 
 ```bash
-git clone <repo-url> ~/hydra && cd ~/hydra
+git clone https://github.com/cesarc09/hydra.git ~/hydra && cd ~/hydra
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
@@ -61,7 +61,7 @@ The server fails closed if `HYDRA_AUTH_TOKEN` is unset. For local dev without a 
 ### Client (each machine that runs Claude Code)
 
 ```bash
-git clone <repo-url> ~/projects/hydra
+git clone https://github.com/cesarc09/hydra.git ~/projects/hydra
 export HYDRA_URL=https://your-hydra-server       # or http://localhost:8400
 export HYDRA_AUTH_TOKEN=...                      # must match the server
 export HYDRA_INSTANCE_ID="$(hostname)"
@@ -69,6 +69,8 @@ bash ~/projects/hydra/client/setup.sh
 ```
 
 `setup.sh` installs `~/.claude/settings.json` with hooks pointing at `$HYDRA_URL` and installs the `hydra` CLI (`pip install -e`). Put the exports in your shell profile so hooks see them in every session.
+
+For a full walkthrough covering VSCode Remote, Windows, and initial memory sync, see [ONBOARDING.md](ONBOARDING.md).
 
 ### Verify
 

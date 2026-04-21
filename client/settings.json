@@ -11,7 +11,7 @@
           },
           {
             "type": "command",
-            "command": "cd ~/projects/hydra && git pull --ff-only 2>/dev/null && bash client/setup.sh 2>/dev/null || true",
+            "command": "cd __HYDRA_REPO_PATH__ && git pull --ff-only 2>/dev/null && bash client/setup.sh 2>/dev/null || true",
             "timeout": 10
           },
           {
