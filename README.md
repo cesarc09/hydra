@@ -104,6 +104,19 @@ hydra config get-claude-md | put-claude-md FILE
 
 Global auth via `HYDRA_AUTH_TOKEN` and `HYDRA_URL` env vars.
 
+## Dashboard
+
+Two pages, both behind the bearer token:
+
+- **`/` — Sessions.** Live grid of session cards (active / waiting / idle / ended), grouped by status and updated via SSE.
+  - **Archive** ended or idle sessions to hide them from the main view (per-card `×` or the bulk "Archive ended/idle" button). Archived sessions stay in the DB under a collapsible **Archive** section and auto-unarchive if they receive a new hook event.
+  - **Filter Recent Events** by selected sessions via the chip row next to the Recent Events header. Only active / waiting / idle sessions appear as chips; selection is session-local and resets on reload.
+- **`/memory` — Memory dashboard.** Browse the cross-machine memory store.
+  - Global memories (`user` / `feedback`) listed separately from project-scoped memories, grouped per project with expandable rows.
+  - Click a memory name to expand its body inline.
+  - Per memory: **Delete**, **Copy to another project** (with overwrite confirmation), **Move to global** (pick new `user` / `feedback` type). Read-only bodies — edits still go through `hydra sync`.
+  - Stats header: project count and memory count, split global vs project-scoped.
+
 ## Session State Machine
 
 | Event | Status |

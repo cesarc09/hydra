@@ -4,7 +4,7 @@ Features organized by theme, roughly prioritized within each section.
 
 ## Context System
 
-- **Memory dashboard UI** — browse, search, and filter memories by project or type. View bodies, maybe inline edit. Without this the DB is only reachable via CLI.
+- **Memory dashboard: search, type filter, inline edit** — follow-ups to the v1 dashboard at `/memory`. Currently read-only with delete / copy / move actions; no search box, no type facet, no body editor. Add once the memory list grows past one screen.
 - **Conflict resolution UI** — when `hydra sync` flags a conflict, surface it on the dashboard with a side-by-side diff; pick a side or merge. Today conflicts block sync silently from the user's perspective until they run the CLI manually.
 - **Auto-register project from cwd** — during `hydra sync --push`, if no project matches the cwd, prompt (or auto-register) with a sensible slug from the dirname. Removes a manual `hydra project create` step per machine.
 - **Fold CLAUDE.md into `hydra sync`** — currently pulled separately via curl in the SessionStart hook. Would simplify onboarding by removing one hook.

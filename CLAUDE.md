@@ -40,19 +40,21 @@ Both must pass clean. Fix issues before committing.
 
 ```
 server/
-  app.py              — FastAPI entry, lifespan startup guard, body-size middleware, CORS
+  app.py              — FastAPI entry, lifespan startup guard, body-size middleware, CORS,
+                        /memory route -> static/memory.html
   auth.py             — require_auth + require_auth_sse (accepts ?token= for EventSource)
   config.py           — env vars (AUTH_TOKEN, BIND_HOST, PUBLIC_ORIGIN, ALLOW_NO_AUTH, DB_PATH)
-  db.py               — SQLite singleton + idempotent migration (project_slug ALTER)
+  db.py               — SQLite singleton + idempotent migrations (project_slug, archived_at)
   models.py           — Pydantic models (HookEvent, MemoryCreate/Item, ProjectItem, ...)
   routers/
     hooks.py          — POST /api/hooks/event
-    sessions.py       — GET sessions/events, SSE stream (require_auth_sse), editor config
+    sessions.py       — GET sessions/events, SSE stream (require_auth_sse), editor config,
+                        POST /sessions/{id}/archive|unarchive + /sessions/archive-ended
     config.py         — GET/PUT /api/config/claude-md
     memory.py         — CRUD /api/memory with upsert on (name, project_slug) + filtered GET
     projects.py       — CRUD /api/projects
   services/
-    session_manager.py — State machine, bounded SSE broadcast, DB writes
+    session_manager.py — State machine, bounded SSE broadcast, DB writes, archive ops
 client/
   hydra_cli/
     __main__.py       — CLI dispatch (memory, project, config, sync)
@@ -61,7 +63,10 @@ client/
   settings.json       — Claude Code settings template (__HYDRA_URL__ placeholder)
   setup.sh            — Copies settings.json with URL substitution + installs hydra CLI
 static/
-  index.html, app.js, style.css — Dashboard (no build step, bearer-token prompt)
+  index.html, app.js   — Sessions dashboard (/); archive, Recent Events chip filter
+  memory.html, memory.js — Memory dashboard (/memory); browse, delete, copy, move
+  utils.js             — Shared apiFetch + token handling, escHtml (loaded before page JS)
+  style.css            — Shared styles (no build step, bearer-token prompt)
 tests/
   conftest.py         — Per-test isolated SQLite + test client; sets ALLOW_NO_AUTH=True
   test_hooks.py       — Hook ingestion + state machine
@@ -69,13 +74,16 @@ tests/
   test_memory.py      — Memory CRUD + upsert + project scoping + filtered list
   test_projects.py    — Project CRUD
   test_sync.py        — CLI sync (pull, push, bidirectional, conflict detection)
+  test_session_archive.py — Archive endpoints + auto-unarchive on new activity
   test_startup.py     — Fail-closed startup guard
-schema.sql            — DDL; memories has project_slug FK + partial unique indexes
+schema.sql            — DDL; sessions.archived_at, memories has project_slug FK + partial unique indexes
 ```
 
 ## Key Patterns
 
 - **Session state machine:** SessionStart/UserPromptSubmit/PostToolUse → `active`, Stop → `idle`, Notification(idle_prompt) → `waiting_input`, SessionEnd → `ended`
+- **Session archive:** only `ended` / `idle` can be archived. SessionStart / UserPromptSubmit / PostToolUse clear `archived_at` — archived sessions auto-surface when they wake up. `Stop` alone does NOT unarchive.
+- **Dashboard pages:** `/` (sessions) and `/memory` (memory) are separate HTML/JS entry points. Shared helpers (`apiFetch`, `ensureToken`, `escHtml`) live in `static/utils.js`; both pages load it before their own script. No bundler.
 - **Memory scope:** type=user/feedback → global (project_slug=NULL); type=project/reference → pinned to cwd's registered project. `hydra sync` derives scope from type automatically.
 - **Upsert semantics:** `POST /api/memory` upserts on `(name, project_slug)`. Partial unique indexes make NULL (global) names distinct from project-pinned names.
 - **SSE broadcast:** `session_manager._subscribers` is a list of `asyncio.Queue(maxsize=1000)`. Slow consumers are dropped on `QueueFull` rather than blocking the broadcast.
