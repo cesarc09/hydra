@@ -43,6 +43,17 @@ async def _migrate(conn: aiosqlite.Connection) -> None:
             "ON memories(name, project_slug) WHERE project_slug IS NOT NULL"
         )
 
+    cursor = await conn.execute("PRAGMA table_info(sessions)")
+    session_cols = {row[1] for row in await cursor.fetchall()}
+    if "archived_at" not in session_cols:
+        await conn.execute("ALTER TABLE sessions ADD COLUMN archived_at TEXT")
+    # Partial index references archived_at, so it lives here (after the ALTER)
+    # rather than in schema.sql — schema.sql runs before this migration.
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_active "
+        "ON sessions(last_event_at) WHERE archived_at IS NULL"
+    )
+
     # projects.path → project_paths(slug, instance_id='legacy', path)
     cursor = await conn.execute("PRAGMA table_info(projects)")
     proj_cols = {row[1] for row in await cursor.fetchall()}

@@ -201,3 +201,114 @@ a.file-link:hover {
     padding: 2rem;
 }
 
+/* Archive bulk button — !important to override any Pico defaults we may
+   not have anticipated. Spans don't inherit Pico's button styling, but
+   we use !important here defensively after several rounds of regressions. */
+.archive-bulk-btn {
+    display: inline-flex !important;
+    align-items: center;
+    margin-left: auto;
+    padding: 0.4em 0.9em !important;
+    font-size: 0.85em;
+    color: #D9CAB3 !important;
+    background: #4a4540 !important;
+    border: 1px solid #6b6358 !important;
+    border-radius: 4px;
+    cursor: pointer;
+    user-select: none;
+    align-self: center;
+    line-height: 1.2;
+}
+.archive-bulk-btn:hover {
+    background: #5a534c !important;
+    border-color: #887a64 !important;
+}
+
+/* Per-card archive × — must be visible even on .status-ended cards
+   which have opacity: 0.6. High-contrast background + bright color. */
+.archive-btn {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.8em;
+    height: 1.8em;
+    padding: 0 0.3em;
+    color: #fff !important;
+    font-size: 1.2em;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: 4px;
+    user-select: none;
+    background: #4a4540 !important;
+    border: 1px solid #6b6358;
+}
+.archive-btn:hover {
+    background: #6b6358 !important;
+}
+
+/* Group badge + archive button together on the right of the card header. */
+.session-card .card-header-right {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+/* Prevent long tool_input_summary from overflowing the card.
+   Merged with the original .last-activity rule above. Apply clipping
+   to the card itself for defence-in-depth. */
+.session-card {
+    overflow: hidden;
+}
+.session-card .last-activity {
+    gap: 0.5rem;
+    overflow: hidden;
+}
+.session-card .last-activity .last-activity-text {
+    display: block !important;
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+}
+.session-card .last-activity .time-ago {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+/* Inline children (tool-name, code) inside the clipped text — ensure
+   they participate in the ellipsis rather than stretching the container. */
+.session-card .last-activity .last-activity-text code,
+.session-card .last-activity .last-activity-text .tool-name {
+    white-space: nowrap;
+}
+
+/* Archive section */
+#archive-section {
+    margin-top: 2rem;
+}
+.archive-toggle {
+    cursor: pointer;
+    user-select: none;
+}
+.archive-toggle:hover {
+    color: #ede4d4;
+}
+.archive-caret {
+    display: inline-block;
+    width: 1em;
+    color: #887a64;
+}
+.archive-count {
+    color: #887a64;
+    font-weight: 400;
+    font-size: 0.9em;
+}
+.sessions-grid.hidden {
+    display: none;
+}
+.archived-card {
+    opacity: 0.7;
+}
+

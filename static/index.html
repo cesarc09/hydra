@@ -22,6 +22,7 @@
                 <span id="count-waiting" class="badge badge-yellow">0 Waiting</span>
                 <span id="count-idle" class="badge badge-gray">0 Idle</span>
                 <span id="count-ended" class="badge badge-red">0 Ended</span>
+                <span id="archive-ended-btn" class="archive-bulk-btn" onclick="archiveAllEnded()">Archive ended/idle</span>
             </div>
         </section>
 
@@ -34,6 +35,14 @@
             <div id="event-log" class="event-log">
                 <p class="empty-state">Waiting for events...</p>
             </div>
+        </section>
+
+        <section id="archive-section">
+            <h3 class="section-title archive-toggle" onclick="toggleArchive()">
+                <span class="archive-caret" id="archive-caret">▸</span>
+                Archive <span id="archive-count" class="archive-count"></span>
+            </h3>
+            <div id="archive-grid" class="sessions-grid hidden"></div>
         </section>
 
     </main>

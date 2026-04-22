@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     last_tool TEXT,
     last_tool_input_summary TEXT,
     files_changed TEXT DEFAULT '[]',
-    end_reason TEXT
+    end_reason TEXT,
+    archived_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS events (

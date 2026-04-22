@@ -2,6 +2,8 @@ const API = window.location.origin + "/api";
 const MAX_EVENTS = 100;
 
 let sessions = {};
+let archived = {};
+let archiveOpen = false;
 let eventLog = [];
 let editorConfig = { default: { editor: "vscode", type: "local" }, instances: {} };
 let authToken = localStorage.getItem("hydraToken") || "";
@@ -93,6 +95,30 @@ function connectSSE() {
 }
 
 function handleEvent(data) {
+    // Archive lifecycle events arrive over the same stream.
+    if (data.event_name === "session_archived") {
+        if (sessions[data.session_id]) {
+            delete sessions[data.session_id];
+            renderSessions();
+        }
+        if (archiveOpen) fetchArchived();
+        return;
+    }
+    if (data.event_name === "session_archived_bulk") {
+        for (const sid of data.session_ids || []) delete sessions[sid];
+        renderSessions();
+        if (archiveOpen) fetchArchived();
+        return;
+    }
+    if (data.event_name === "session_unarchived") {
+        if (archived[data.session_id]) {
+            delete archived[data.session_id];
+            renderArchive();
+        }
+        fetchSessions();
+        return;
+    }
+
     // Update session state optimistically
     const sid = data.session_id;
     if (sessions[sid]) {
@@ -205,14 +231,22 @@ function renderCard(s) {
         ? `<span class="files-count clickable" onclick="toggleFiles('${s.session_id}')">${filesCount} file${filesCount !== 1 ? "s" : ""} changed</span>`
         : `<span class="files-count">0 files changed</span>`;
 
+    const archivable = s.status === "ended" || s.status === "idle";
+    const archiveBtn = archivable
+        ? `<span class="archive-btn" title="Archive" onclick="archiveSession('${s.session_id}')">×</span>`
+        : "";
+
     return `
         <article class="session-card status-${s.status}">
             <div class="card-header">
                 <span class="instance-name">${escHtml(s.instance_id)}</span>
-                <span class="badge ${statusBadge}">${statusLabel}</span>
+                <span class="card-header-right">
+                    <span class="badge ${statusBadge}">${statusLabel}</span>
+                    ${archiveBtn}
+                </span>
             </div>
             <div class="cwd" title="${escHtml(s.cwd)}">${escHtml(shortCwd)}</div>
-            <div class="last-activity"><span>${lastActivity}</span><span class="time-ago">${ago}</span></div>
+            <div class="last-activity"><span class="last-activity-text">${lastActivity}</span><span class="time-ago">${ago}</span></div>
             ${filesCount > 0 ? `<div id="files-${s.session_id}" class="files-list hidden">${filesList}</div>` : ""}
             <div class="card-footer">
                 ${filesToggle}
@@ -220,6 +254,102 @@ function renderCard(s) {
             </div>
         </article>
     `;
+}
+
+function renderArchivedCard(s) {
+    const shortCwd = s.cwd ? s.cwd.split("/").slice(-2).join("/") : "—";
+    const when = s.archived_at ? timeAgo(s.archived_at) : "";
+    return `
+        <article class="session-card archived-card status-${s.status}">
+            <div class="card-header">
+                <span class="instance-name">${escHtml(s.instance_id)}</span>
+                <span class="archive-btn" title="Unarchive" onclick="unarchiveSession('${s.session_id}')">↺</span>
+            </div>
+            <div class="cwd" title="${escHtml(s.cwd)}">${escHtml(shortCwd)}</div>
+            <div class="last-activity"><span class="last-activity-text">archived ${when}</span></div>
+        </article>
+    `;
+}
+
+async function archiveSession(sessionId) {
+    const res = await apiFetch(`${API}/sessions/${sessionId}/archive`, { method: "POST" });
+    if (res.status === 204) {
+        delete sessions[sessionId];
+        renderSessions();
+        if (archiveOpen) fetchArchived();
+    } else if (res.status === 409) {
+        console.warn("Cannot archive session in active state");
+    } else {
+        console.error("Archive failed:", res.status);
+    }
+}
+
+async function unarchiveSession(sessionId) {
+    const res = await apiFetch(`${API}/sessions/${sessionId}/unarchive`, { method: "POST" });
+    if (res.status === 204) {
+        delete archived[sessionId];
+        renderArchive();
+        fetchSessions();
+    } else {
+        console.error("Unarchive failed:", res.status);
+    }
+}
+
+async function archiveAllEnded() {
+    const count = Object.values(sessions).filter(
+        (s) => s.status === "ended" || s.status === "idle"
+    ).length;
+    if (count === 0) return;
+    if (!confirm(`Archive ${count} ended/idle session${count !== 1 ? "s" : ""}?`)) return;
+    const res = await apiFetch(`${API}/sessions/archive-ended`, { method: "POST" });
+    if (!res.ok) {
+        console.error("Bulk archive failed:", res.status);
+        return;
+    }
+    const data = await res.json();
+    for (const sid of data.session_ids || []) delete sessions[sid];
+    renderSessions();
+    if (archiveOpen) fetchArchived();
+}
+
+async function fetchArchived() {
+    try {
+        const res = await apiFetch(`${API}/sessions?archived=true`);
+        if (!res.ok) return;
+        const data = await res.json();
+        archived = {};
+        for (const s of data) archived[s.session_id] = s;
+        renderArchive();
+    } catch (e) {
+        console.error("Failed to fetch archive:", e);
+    }
+}
+
+function toggleArchive() {
+    archiveOpen = !archiveOpen;
+    const grid = document.getElementById("archive-grid");
+    const caret = document.getElementById("archive-caret");
+    if (archiveOpen) {
+        grid.classList.remove("hidden");
+        caret.textContent = "▾";
+        fetchArchived();
+    } else {
+        grid.classList.add("hidden");
+        caret.textContent = "▸";
+    }
+}
+
+function renderArchive() {
+    const grid = document.getElementById("archive-grid");
+    const countEl = document.getElementById("archive-count");
+    const list = Object.values(archived);
+    countEl.textContent = list.length ? `(${list.length})` : "";
+    if (list.length === 0) {
+        grid.innerHTML = '<p class="empty-state">No archived sessions.</p>';
+        return;
+    }
+    list.sort((a, b) => (b.archived_at || "").localeCompare(a.archived_at || ""));
+    grid.innerHTML = list.map(renderArchivedCard).join("");
 }
 
 function renderEventLog() {

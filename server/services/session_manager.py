@@ -71,14 +71,16 @@ async def handle_event(event: HookEvent, instance_id: str):
 
     match event.hook_event_name:
         case "SessionStart":
-            # Upsert session
+            # Upsert session; clear archived_at so a reactivated session
+            # returns to the main dashboard view.
             await db.execute(
                 """INSERT INTO sessions
                    (session_id, instance_id, status, cwd, model,
                     started_at, last_event_at, files_changed)
                    VALUES (?, ?, 'active', ?, ?, ?, ?, '[]')
                    ON CONFLICT(session_id) DO UPDATE SET
-                     status='active', cwd=?, model=?, last_event_at=?""",
+                     status='active', cwd=?, model=?, last_event_at=?,
+                     archived_at=NULL""",
                 (event.session_id, instance_id, event.cwd, event.model,
                  now, now,
                  event.cwd, event.model, now),
@@ -93,12 +95,13 @@ async def handle_event(event: HookEvent, instance_id: str):
 
         case "UserPromptSubmit":
             await db.execute(
-                "UPDATE sessions SET status='active', last_event_at=? WHERE session_id=?",
+                "UPDATE sessions SET status='active', last_event_at=?,"
+                " archived_at=NULL WHERE session_id=?",
                 (now, event.session_id),
             )
 
         case "PostToolUse":
-            updates = {"last_event_at": now, "status": "active"}
+            updates = {"last_event_at": now, "status": "active", "archived_at": None}
             if event.tool_name:
                 updates["last_tool"] = event.tool_name
             if summary:
@@ -168,10 +171,11 @@ async def handle_event(event: HookEvent, instance_id: str):
     })
 
 
-async def get_all_sessions() -> list[dict]:
+async def get_all_sessions(archived: bool = False) -> list[dict]:
     db = await get_db()
+    where = "archived_at IS NOT NULL" if archived else "archived_at IS NULL"
     rows = await db.execute_fetchall(
-        "SELECT * FROM sessions ORDER BY last_event_at DESC"
+        f"SELECT * FROM sessions WHERE {where} ORDER BY last_event_at DESC"
     )
     sessions = []
     for row in rows:
@@ -188,3 +192,87 @@ async def get_session_events(session_id: str, limit: int = 50) -> list[dict]:
         (session_id, limit),
     )
     return [dict(row) for row in rows]
+
+
+class SessionNotFound(Exception):
+    pass
+
+
+class SessionStateConflict(Exception):
+    pass
+
+
+_ARCHIVABLE_STATES = ("ended", "idle")
+
+
+async def archive_session(session_id: str) -> None:
+    db = await get_db()
+    rows = list(await db.execute_fetchall(
+        "SELECT status, archived_at FROM sessions WHERE session_id=?",
+        (session_id,),
+    ))
+    if not rows:
+        raise SessionNotFound(session_id)
+    status, archived_at = rows[0][0], rows[0][1]
+    if archived_at is not None:
+        return  # already archived — idempotent
+    if status not in _ARCHIVABLE_STATES:
+        raise SessionStateConflict(status)
+    now = _now()
+    await db.execute(
+        "UPDATE sessions SET archived_at=? WHERE session_id=?",
+        (now, session_id),
+    )
+    await db.commit()
+    await _broadcast({
+        "session_id": session_id,
+        "event_name": "session_archived",
+        "received_at": now,
+    })
+
+
+async def unarchive_session(session_id: str) -> None:
+    db = await get_db()
+    rows = list(await db.execute_fetchall(
+        "SELECT archived_at FROM sessions WHERE session_id=?",
+        (session_id,),
+    ))
+    if not rows:
+        raise SessionNotFound(session_id)
+    if rows[0][0] is None:
+        return  # already visible — idempotent
+    now = _now()
+    await db.execute(
+        "UPDATE sessions SET archived_at=NULL WHERE session_id=?",
+        (session_id,),
+    )
+    await db.commit()
+    await _broadcast({
+        "session_id": session_id,
+        "event_name": "session_unarchived",
+        "received_at": now,
+    })
+
+
+async def archive_ended_sessions() -> list[str]:
+    db = await get_db()
+    rows = list(await db.execute_fetchall(
+        "SELECT session_id FROM sessions "
+        "WHERE archived_at IS NULL AND status IN ('ended', 'idle')"
+    ))
+    ids = [row[0] for row in rows]
+    if not ids:
+        return []
+    now = _now()
+    placeholders = ",".join("?" * len(ids))
+    await db.execute(
+        f"UPDATE sessions SET archived_at=? WHERE session_id IN ({placeholders})",
+        (now, *ids),
+    )
+    await db.commit()
+    await _broadcast({
+        "event_name": "session_archived_bulk",
+        "session_ids": ids,
+        "received_at": now,
+    })
+    return ids
