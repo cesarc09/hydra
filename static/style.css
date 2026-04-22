@@ -172,6 +172,57 @@ a.file-link:hover {
     color: #D9CAB3;
 }
 
+/* Recent Events header with inline filter chips */
+.events-header {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    margin-bottom: 0.5rem;
+    flex-wrap: wrap;
+}
+.event-filter {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: center;
+}
+.event-filter-label {
+    color: #887a64;
+    font-size: 0.85em;
+}
+.event-filter-chip {
+    display: inline-block;
+    padding: 0.15em 0.6em;
+    font-size: 0.8em;
+    font-family: monospace;
+    border: 1px solid #4a4540;
+    border-radius: 4px;
+    color: #a89a84;
+    background: transparent;
+    cursor: pointer;
+    user-select: none;
+}
+.event-filter-chip:hover {
+    border-color: #6b6358;
+    color: #D9CAB3;
+}
+.event-filter-chip.selected {
+    background: #D9CAB3;
+    color: #2C3233;
+    border-color: #D9CAB3;
+    font-weight: 600;
+}
+.event-filter-clear {
+    color: #887a64;
+    font-size: 0.8em;
+    cursor: pointer;
+    text-decoration: underline dotted;
+    text-underline-offset: 2px;
+}
+.event-filter-clear:hover {
+    color: #D9CAB3;
+}
+
 /* Event log */
 .event-log {
     max-height: 400px;

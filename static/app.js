@@ -5,6 +5,7 @@ let sessions = {};
 let archived = {};
 let archiveOpen = false;
 let eventLog = [];
+let selectedSessionIds = new Set();
 let editorConfig = { default: { editor: "vscode", type: "local" }, instances: {} };
 let authToken = localStorage.getItem("hydraToken") || "";
 
@@ -184,6 +185,7 @@ function renderSessions() {
     if (list.length === 0) {
         grid.innerHTML = '<p class="empty-state">No sessions yet. Start a Claude Code instance with hooks configured.</p>';
         updateCounts(list);
+        renderEventFilter();
         return;
     }
 
@@ -193,6 +195,56 @@ function renderSessions() {
 
     grid.innerHTML = list.map(renderCard).join("");
     updateCounts(list);
+    renderEventFilter();
+}
+
+// --- Event filter chips ---
+
+function renderEventFilter() {
+    const eligible = Object.values(sessions).filter(
+        (s) => s.status === "active" || s.status === "waiting_input" || s.status === "idle"
+    );
+    // Prune selection to the eligible set — auto-removes archived/ended sessions.
+    const eligibleIds = new Set(eligible.map((s) => s.session_id));
+    for (const sid of [...selectedSessionIds]) {
+        if (!eligibleIds.has(sid)) selectedSessionIds.delete(sid);
+    }
+
+    const container = document.getElementById("event-filter");
+    if (!container) return;
+    if (eligible.length === 0) {
+        container.innerHTML = "";
+        return;
+    }
+
+    const chips = eligible.map((s) => {
+        const base = s.cwd ? s.cwd.split(/[\/\\]/).filter(Boolean).pop() : "";
+        const project = base || s.session_id.slice(0, 8);
+        const selected = selectedSessionIds.has(s.session_id) ? " selected" : "";
+        return `<span class="event-filter-chip${selected}" title="${escHtml(s.session_id)}" onclick="toggleSessionFilter('${s.session_id}')">${escHtml(s.instance_id)} · ${escHtml(project)}</span>`;
+    }).join("");
+
+    const clear = selectedSessionIds.size > 0
+        ? `<span class="event-filter-clear" onclick="clearEventFilter()">Clear</span>`
+        : "";
+
+    container.innerHTML = `<span class="event-filter-label">Filter:</span>${chips}${clear}`;
+}
+
+function toggleSessionFilter(sid) {
+    if (selectedSessionIds.has(sid)) {
+        selectedSessionIds.delete(sid);
+    } else {
+        selectedSessionIds.add(sid);
+    }
+    renderEventFilter();
+    renderEventLog();
+}
+
+function clearEventFilter() {
+    selectedSessionIds.clear();
+    renderEventFilter();
+    renderEventLog();
 }
 
 function renderCard(s) {
@@ -354,11 +406,17 @@ function renderArchive() {
 
 function renderEventLog() {
     const log = document.getElementById("event-log");
-    if (eventLog.length === 0) {
-        log.innerHTML = '<p class="empty-state">Waiting for events...</p>';
+    const filtered = selectedSessionIds.size === 0
+        ? eventLog
+        : eventLog.filter((e) => selectedSessionIds.has(e.session_id));
+    if (filtered.length === 0) {
+        const msg = selectedSessionIds.size === 0
+            ? "Waiting for events..."
+            : "No events match the filter.";
+        log.innerHTML = `<p class="empty-state">${msg}</p>`;
         return;
     }
-    log.innerHTML = eventLog.map((e) => {
+    log.innerHTML = filtered.map((e) => {
         const time = new Date(e.received_at).toLocaleTimeString();
         const detail = e.tool_input_summary ? escHtml(truncate(e.tool_input_summary, 80)) : "";
         const shortSession = e.session_id ? e.session_id.slice(0, 8) : "—";
