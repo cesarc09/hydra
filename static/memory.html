@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hydra · Memory</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header class="container">
+        <nav>
+            <ul>
+                <li>
+                    <strong class="logo">Hydra · Memory</strong>
+                    <div class="sub-nav"><a href="/" class="nav-link">← Sessions</a></div>
+                </li>
+            </ul>
+            <ul><li><span id="refresh-link" class="nav-link clickable" onclick="refresh()">Refresh</span></li></ul>
+        </nav>
+    </header>
+
+    <main class="container">
+        <section id="memory-stats" class="memory-stats">Loading…</section>
+
+        <section>
+            <h3 class="section-title">Global memories <span id="global-count" class="memory-count"></span></h3>
+            <div id="global-memories" class="memory-list">
+                <p class="empty-state">Loading…</p>
+            </div>
+        </section>
+
+        <section>
+            <h3 class="section-title">Projects <span id="project-count" class="memory-count"></span></h3>
+            <div id="project-list" class="project-list">
+                <p class="empty-state">Loading…</p>
+            </div>
+        </section>
+    </main>
+
+    <script src="/utils.js"></script>
+    <script src="/memory.js"></script>
+</body>
+</html>

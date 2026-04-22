@@ -9,7 +9,7 @@
 
 /* Title */
 .logo {
-    font-size: 1.6em;
+    font-size: 2em;
     letter-spacing: 0.04em;
     color: #D9CAB3;
 }
@@ -250,6 +250,187 @@ a.file-link:hover {
     text-align: center;
     color: #887a64;
     padding: 2rem;
+}
+
+/* Header nav links (shared across pages) */
+.nav-link {
+    color: #a89a84;
+    text-decoration: none;
+    font-size: 0.9em;
+}
+.nav-link:hover {
+    color: #D9CAB3;
+}
+.nav-link.clickable {
+    cursor: pointer;
+    user-select: none;
+}
+/* Sub-nav appears on a new line below the logo. */
+.sub-nav {
+    margin-top: -0.2em;
+    line-height: 1.2;
+}
+.sub-nav .nav-link {
+    font-size: 1em;
+}
+
+/* --- Memory dashboard --- */
+.memory-stats {
+    color: #a89a84;
+    font-size: 0.95em;
+    margin-bottom: 1.5rem;
+}
+.memory-count {
+    color: #887a64;
+    font-weight: 400;
+    font-size: 0.85em;
+}
+
+.memory-list,
+.project-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 2rem;
+}
+
+.memory-row {
+    border: 1px solid #4a4540;
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    background: #353d3e;
+}
+.memory-head {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+.memory-toggle {
+    cursor: pointer;
+    user-select: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+.memory-name {
+    font-weight: 600;
+    color: #D9CAB3;
+    font-family: monospace;
+}
+.memory-toggle:hover .memory-name {
+    color: #ede4d4;
+}
+.memory-description {
+    color: #a89a84;
+    font-size: 0.85em;
+    margin-top: 0.3rem;
+    padding-left: 1.4rem;
+}
+.memory-body {
+    margin-top: 0.5rem;
+    padding: 0.75rem;
+    background: #242b2c;
+    border: 1px solid #4a4540;
+    border-radius: 4px;
+    max-height: 400px;
+    overflow: auto;
+    font-family: monospace;
+    font-size: 0.85em;
+    color: #ede4d4;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.memory-actions {
+    margin-left: auto;
+    display: inline-flex;
+    gap: 0.6rem;
+}
+.memory-action {
+    color: #a89a84;
+    font-size: 0.85em;
+    cursor: pointer;
+    user-select: none;
+    text-decoration: underline dotted;
+    text-underline-offset: 2px;
+}
+.memory-action:hover {
+    color: #D9CAB3;
+}
+.memory-action-danger {
+    color: #e27878;
+}
+.memory-action-danger:hover {
+    color: #f87171;
+}
+.memory-inline-form {
+    margin-top: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: #2C3233;
+    border: 1px solid #4a4540;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    font-size: 0.85em;
+    color: #a89a84;
+}
+.memory-inline-form select {
+    margin: 0 0 0 0.4rem;
+    padding: 0.2em 0.4em;
+    background: #353d3e;
+    color: #D9CAB3;
+    border: 1px solid #4a4540;
+    border-radius: 3px;
+    font-size: 0.95em;
+    width: auto;
+    display: inline-block;
+}
+
+/* Project rows */
+.project-row {
+    border: 1px solid #4a4540;
+    border-radius: 6px;
+    background: #353d3e;
+    overflow: hidden;
+}
+.project-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    user-select: none;
+    flex-wrap: wrap;
+}
+.project-header:hover {
+    background: #3a4445;
+}
+.project-slug {
+    font-weight: 700;
+    color: #D9CAB3;
+    font-family: monospace;
+}
+.project-desc {
+    color: #a89a84;
+    font-size: 0.9em;
+}
+.project-memory-count {
+    margin-left: auto;
+    color: #887a64;
+    font-size: 0.85em;
+}
+.project-memories {
+    padding: 0.5rem 1rem 0.75rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    border-top: 1px solid #4a4540;
+    background: #2f3637;
+}
+.project-memories .memory-row {
+    background: #353d3e;
 }
 
 /* Archive bulk button — !important to override any Pico defaults we may

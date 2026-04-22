@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from server import config
@@ -61,6 +61,12 @@ app.include_router(sessions.router)
 app.include_router(config_router.router)
 app.include_router(memory.router)
 app.include_router(projects.router)
+
+
+@app.get("/memory")
+async def memory_dashboard():
+    return FileResponse(config.BASE_DIR / "static" / "memory.html")
+
 
 app.mount(
     "/", StaticFiles(directory=str(config.BASE_DIR / "static"), html=True), name="static"
