@@ -3,10 +3,17 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import re
 from datetime import UTC, datetime
 
 from server.db import get_db
 from server.models import HookEvent
+
+# Remote Control URLs have the shape https://claude.ai/code/session_<opaque-id>.
+# The ID is server-minted by Anthropic; we validate shape only, not contents.
+_REMOTE_CONTROL_URL_RE = re.compile(
+    r"^https://claude\.ai/code/session_[A-Za-z0-9]+$"
+)
 
 # SSE subscribers: list of asyncio.Queue that receive new events
 _subscribers: list[asyncio.Queue] = []
@@ -87,9 +94,11 @@ async def handle_event(event: HookEvent, instance_id: str):
             )
 
         case "SessionEnd":
+            # Remote Control URL dies with the CLI process; clear it so the
+            # dashboard doesn't surface a dead link on the next launch.
             await db.execute(
                 "UPDATE sessions SET status='ended', last_event_at=?,"
-                " end_reason=? WHERE session_id=?",
+                " end_reason=?, remote_control_url=NULL WHERE session_id=?",
                 (now, event.source, event.session_id),
             )
 
@@ -202,6 +211,10 @@ class SessionStateConflict(Exception):
     pass
 
 
+class InvalidRemoteControlUrl(Exception):
+    pass
+
+
 _ARCHIVABLE_STATES = ("ended", "idle")
 
 
@@ -252,6 +265,41 @@ async def unarchive_session(session_id: str) -> None:
         "event_name": "session_unarchived",
         "received_at": now,
     })
+
+
+async def set_remote_control_url(session_id: str, url: str) -> str | None:
+    """Set or clear a session's Remote Control deep-link URL.
+
+    Empty string clears; any other value must match the documented shape.
+    Returns the stored value (None when cleared).
+    """
+    stored: str | None
+    if url == "":
+        stored = None
+    elif _REMOTE_CONTROL_URL_RE.match(url):
+        stored = url
+    else:
+        raise InvalidRemoteControlUrl(url)
+
+    db = await get_db()
+    rows = list(await db.execute_fetchall(
+        "SELECT 1 FROM sessions WHERE session_id=?",
+        (session_id,),
+    ))
+    if not rows:
+        raise SessionNotFound(session_id)
+    await db.execute(
+        "UPDATE sessions SET remote_control_url=? WHERE session_id=?",
+        (stored, session_id),
+    )
+    await db.commit()
+    await _broadcast({
+        "session_id": session_id,
+        "event_name": "session_url_updated",
+        "remote_control_url": stored,
+        "received_at": _now(),
+    })
+    return stored
 
 
 async def archive_ended_sessions() -> list[str]:

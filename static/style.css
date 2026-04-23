@@ -132,6 +132,33 @@
     font-size: 0.8em;
     text-align: right;
 }
+.session-card .remote-slot {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+.session-card .remote-edit {
+    cursor: pointer;
+    color: #887a64;
+    font-size: 0.8em;
+}
+.session-card .remote-edit:hover {
+    color: #D9CAB3;
+}
+.session-card .remote-url-input {
+    font-size: 0.75em;
+    padding: 0.15rem 0.4rem;
+    margin: 0;
+    width: 60%;
+    max-width: 220px;
+    background: #2C3233;
+    border: 1px solid #4a4540;
+    border-radius: 4px;
+    color: #D9CAB3;
+}
+.session-card .remote-url-input::placeholder {
+    color: #887a64;
+}
 
 /* Expandable file list */
 .files-list {

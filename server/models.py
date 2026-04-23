@@ -41,6 +41,11 @@ class SessionState(BaseModel):
     end_reason: str | None = None
 
 
+class RemoteControlUrlUpdate(BaseModel):
+    """Body for PUT /api/sessions/{id}/remote-control-url. Empty string clears."""
+    url: str = Field(max_length=256)
+
+
 class EventRecord(BaseModel):
     id: int
     session_id: str

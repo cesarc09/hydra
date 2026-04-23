@@ -6,13 +6,16 @@ from sse_starlette.sse import EventSourceResponse
 
 from server.auth import require_auth, require_auth_sse
 from server.config import EDITORS_PATH
+from server.models import RemoteControlUrlUpdate
 from server.services.session_manager import (
+    InvalidRemoteControlUrl,
     SessionNotFound,
     SessionStateConflict,
     archive_ended_sessions,
     archive_session,
     get_all_sessions,
     get_session_events,
+    set_remote_control_url,
     subscribe,
     unarchive_session,
     unsubscribe,
@@ -66,6 +69,25 @@ async def unarchive_session_endpoint(session_id: str):
 async def archive_ended_endpoint():
     ids = await archive_ended_sessions()
     return {"archived": len(ids), "session_ids": ids}
+
+
+@router.put(
+    "/sessions/{session_id}/remote-control-url",
+    dependencies=[Depends(require_auth)],
+)
+async def set_remote_control_url_endpoint(
+    session_id: str, body: RemoteControlUrlUpdate
+):
+    try:
+        stored = await set_remote_control_url(session_id, body.url)
+    except SessionNotFound:
+        raise HTTPException(status_code=404, detail="session not found") from None
+    except InvalidRemoteControlUrl:
+        raise HTTPException(
+            status_code=400,
+            detail="url must match https://claude.ai/code/session_<id>",
+        ) from None
+    return {"remote_control_url": stored}
 
 
 @router.get("/editors", dependencies=[Depends(require_auth)])

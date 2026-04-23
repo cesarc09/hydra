@@ -47,6 +47,8 @@ async def _migrate(conn: aiosqlite.Connection) -> None:
     session_cols = {row[1] for row in await cursor.fetchall()}
     if "archived_at" not in session_cols:
         await conn.execute("ALTER TABLE sessions ADD COLUMN archived_at TEXT")
+    if "remote_control_url" not in session_cols:
+        await conn.execute("ALTER TABLE sessions ADD COLUMN remote_control_url TEXT")
     # Partial index references archived_at, so it lives here (after the ALTER)
     # rather than in schema.sql — schema.sql runs before this migration.
     await conn.execute(

@@ -38,6 +38,8 @@ Onboard this machine as a Hydra client. Hydra is a cross-machine control plane f
 
 6. Verify convergence on one project: `cd <project-path> && hydra sync` (bidirectional) should report `0 pushed, 0 pulled, 0 conflicts` — that's the real idempotency check. (`--pull` is an unconditional overwrite, so it always reports `pulled = <server count>`, which isn't what we want for verification.) Then `hydra memory list` should show the full set.
 
-7. Tell me to start a fresh Claude Code session in one of the registered projects. The SessionStart hook should pull the latest memories + CLAUDE.md, and the session should appear on the dashboard within a second or two.
+7. Recommend (don't force) enabling Claude Code's "Enable Remote Control for all sessions" toggle via the `/config` slash command. This auto-enables Remote Control per session so each session is reachable from the Claude mobile app. Hydra's dashboard has a per-session input to paste the `https://claude.ai/code/session_...` URL that `/remote-control` prints; after pasting once, the card's "Open Remote Control" button deep-links to that specific session from anywhere.
+
+8. Tell me to start a fresh Claude Code session in one of the registered projects. The SessionStart hook should pull the latest memories + CLAUDE.md, and the session should appear on the dashboard within a second or two.
 
 Fail loudly on any step. Don't swallow errors — especially 401 from the CLI (wrong token, or env vars not reaching the process) or `hydra: command not found` (setup.sh's pip install failed).

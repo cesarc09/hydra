@@ -105,6 +105,12 @@ hydra memory list | head
 
 Start a fresh Claude Code session inside a registered project. Within a second it should appear on the dashboard, and `~/.claude/projects/<dir>/memory/` should contain pulled memories.
 
+## 7. Enable Remote Control (recommended, for mobile)
+
+Claude Code's **Remote Control** feature lets you reach a running session from the Claude mobile app. Inside any Claude Code session, run `/config` and turn on "Enable Remote Control for all sessions" so it's auto-enabled per session.
+
+The URL the CLI prints (`https://claude.ai/code/session_...`) isn't exposed to external tooling, so Hydra can't capture it automatically. Each session card on the dashboard has a field to paste this URL once per session — after which the card's "Open Remote Control" button deep-links to that specific session from your phone.
+
 ## Troubleshooting
 
 **401 on hook events.** Env vars aren't reaching the Claude Code process. Inspect one:

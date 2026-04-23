@@ -80,6 +80,13 @@ function handleEvent(data) {
         fetchSessions();
         return;
     }
+    if (data.event_name === "session_url_updated") {
+        if (sessions[data.session_id]) {
+            sessions[data.session_id].remote_control_url = data.remote_control_url;
+            renderSessions();
+        }
+        return;
+    }
 
     // Update session state optimistically
     const sid = data.session_id;
@@ -263,7 +270,7 @@ function renderCard(s) {
             ${filesCount > 0 ? `<div id="files-${s.session_id}" class="files-list hidden">${filesList}</div>` : ""}
             <div class="card-footer">
                 ${filesToggle}
-                <a class="remote-link" href="https://claude.ai/code" target="_blank" rel="noopener">Open Remote Control</a>
+                ${renderRemoteControl(s)}
             </div>
         </article>
     `;
@@ -282,6 +289,49 @@ function renderArchivedCard(s) {
             <div class="last-activity"><span class="last-activity-text">archived ${when}</span></div>
         </article>
     `;
+}
+
+function renderRemoteControl(s) {
+    const url = s.remote_control_url;
+    if (url) {
+        return `
+            <span class="remote-slot">
+                <a class="remote-link" href="${escHtml(url)}" target="_blank" rel="noopener">Open Remote Control</a>
+                <span class="remote-edit" title="Change URL" onclick="editRemoteControlUrl('${s.session_id}')">✎</span>
+            </span>
+        `;
+    }
+    return `<input type="url" class="remote-url-input" placeholder="Paste Remote Control URL"
+                   onkeydown="if (event.key === 'Enter') { event.preventDefault(); setRemoteControlUrl('${s.session_id}', this.value.trim()); }"
+                   onblur="if (this.value.trim()) setRemoteControlUrl('${s.session_id}', this.value.trim());">`;
+}
+
+async function setRemoteControlUrl(sessionId, url) {
+    const res = await apiFetch(`${API}/sessions/${sessionId}/remote-control-url`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+    });
+    if (res.ok) {
+        const data = await res.json();
+        if (sessions[sessionId]) {
+            sessions[sessionId].remote_control_url = data.remote_control_url;
+            renderSessions();
+        }
+    } else if (res.status === 400) {
+        alert("Invalid URL — expected https://claude.ai/code/session_...");
+    } else if (res.status === 404) {
+        console.warn("Session not found when setting Remote Control URL");
+    } else {
+        console.error("Set remote URL failed:", res.status);
+    }
+}
+
+function editRemoteControlUrl(sessionId) {
+    const current = sessions[sessionId]?.remote_control_url || "";
+    const next = window.prompt("Remote Control URL (clear to remove):", current);
+    if (next === null) return;
+    setRemoteControlUrl(sessionId, next.trim());
 }
 
 async function archiveSession(sessionId) {
