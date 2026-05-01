@@ -33,7 +33,7 @@ Hydra is one server that solves both. A memory store and CLAUDE.md that travel w
 
 Two loops run continuously:
 
-**Context loop** — `hydra sync` reconciles each machine's local memory dir (`~/.claude/projects/<dir>/memory/`) with the server. A SessionStart hook runs `hydra sync --pull` before Claude sees the session; a Stop hook runs `hydra sync --push` at turn end. Memories are typed: `user`/`feedback` are global (available everywhere), `project`/`reference` are pinned to the project the cwd maps to.
+**Context loop** — `python -m hydra_cli sync` reconciles each machine's local memory dir (`~/.claude/projects/<dir>/memory/`) with the server. A SessionStart hook runs `python -m hydra_cli sync --pull` before Claude sees the session; a Stop hook runs `python -m hydra_cli sync --push` at turn end. Memories are typed: `user`/`feedback` are global (available everywhere), `project`/`reference` are pinned to the project the cwd maps to.
 
 **Observation loop** — every Claude Code tool call fires an HTTP hook to `/api/hooks/event`. The server tracks session state transitions (active / idle / waiting_input / ended) and broadcasts them over Server-Sent Events to any open dashboard.
 
@@ -94,14 +94,16 @@ Regardless of network path, keep `HYDRA_BIND_HOST=127.0.0.1` and terminate TLS *
 
 ## CLI Reference
 
+Invoke as `python -m hydra_cli ...`. A `hydra` console shim is also installed by setup.sh; use it interchangeably when it's on `PATH`. The `python -m` form is the canonical one because it doesn't depend on a venv-bound entry point — the same reason hooks use it.
+
 ```
-hydra sync [--pull|--push|--dry-run] [--cwd PATH]
+python -m hydra_cli sync [--pull|--push|--dry-run] [--cwd PATH]
                       # Reconcile local memory dir with server. Bidirectional
                       # by default; flags restrict direction. Conflicts are
                       # flagged, not merged.
-hydra memory list | get ID | create ... | update ID ... | delete ID
-hydra project list | get SLUG | create --slug --path | update SLUG | delete
-hydra config get-claude-md | put-claude-md FILE
+python -m hydra_cli memory list | get ID | create ... | update ID ... | delete ID
+python -m hydra_cli project list | get SLUG | create --slug --path | update SLUG | delete
+python -m hydra_cli config get-claude-md | put-claude-md FILE
 ```
 
 Global auth via `HYDRA_AUTH_TOKEN` and `HYDRA_URL` env vars.
@@ -116,7 +118,7 @@ Two pages, both behind the bearer token:
 - **`/memory` — Memory dashboard.** Browse the cross-machine memory store.
   - Global memories (`user` / `feedback`) listed separately from project-scoped memories, grouped per project with expandable rows.
   - Click a memory name to expand its body inline.
-  - Per memory: **Delete**, **Copy to another project** (with overwrite confirmation), **Move to global** (pick new `user` / `feedback` type). Read-only bodies — edits still go through `hydra sync`.
+  - Per memory: **Delete**, **Copy to another project** (with overwrite confirmation), **Move to global** (pick new `user` / `feedback` type). Read-only bodies — edits still go through `python -m hydra_cli sync`.
   - Stats header: project count and memory count, split global vs project-scoped.
 
 ## Session State Machine

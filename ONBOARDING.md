@@ -84,17 +84,17 @@ Verify: `python -m hydra_cli --help` (and optionally `hydra --help` if the conso
 For each project directory where you use Claude Code:
 
 ```bash
-hydra project create --slug <short-name> --path "$(pwd)"
+python -m hydra_cli project create --slug <short-name> --path "$(pwd)"
 ```
 
-The slug identifies the project across machines — use the same slug everywhere. If a project with the same slug already exists (from another machine), `hydra sync` auto-attaches this machine's path by directory basename, so you only need to register brand-new projects manually.
+The slug identifies the project across machines — use the same slug everywhere. If a project with the same slug already exists (from another machine), `python -m hydra_cli sync` auto-attaches this machine's path by directory basename, so you only need to register brand-new projects manually.
 
 ## 5. Upload this machine's existing memories
 
 From each project directory:
 
 ```bash
-hydra sync --push
+python -m hydra_cli sync --push
 ```
 
 Scope is derived from memory type: `user`/`feedback` → global; `project`/`reference` → pinned to the current project. Re-runs are safe (upsert).
@@ -102,7 +102,7 @@ Scope is derived from memory type: `user`/`feedback` → global; `project`/`refe
 ## 6. Verify
 
 ```bash
-hydra memory list | head
+python -m hydra_cli memory list | head
 ```
 
 Start a fresh Claude Code session inside a registered project. Within a second it should appear on the dashboard, and `~/.claude/projects/<dir>/memory/` should contain pulled memories.
@@ -123,10 +123,16 @@ tr '\0' '\n' < /proc/$(pgrep -f claude | head -1)/environ | grep HYDRA
 
 Empty = env-setup file not read. For VSCode Remote, confirm full disconnect + reconnect.
 
-**`hydra: command not found`.** The CLI isn't on PATH. Ensure `~/.local/bin` is in `$PATH`, or run via `python -m hydra_cli`.
+**`No module named hydra_cli`.** `pip install -e client/` ran against a different interpreter than the `python` first on `PATH`. Re-run `setup.sh` from a non-venv shell so `pip` and `python` resolve to the same interpreter.
 
-**Sync reports "no project registered".** The cwd doesn't match any registered path. Either `hydra project create` for this directory, or ensure its basename matches an existing slug (auto-attach will fire).
+**`hydra: command not found` (when invoking the shim).** Either fall back to `python -m hydra_cli` (always works once the package is installed against the right interpreter), or ensure the shim's directory (`~/.local/bin` or the venv `bin/`) is on `PATH`.
+
+**Sync reports "no project registered".** The cwd doesn't match any registered path. Either `python -m hydra_cli project create` for this directory, or ensure its basename matches an existing slug (auto-attach will fire).
 
 ## Automating this flow
 
 If you'd rather have Claude Code walk through the steps interactively, paste the prompt from [client/onboard-prompt.md](client/onboard-prompt.md) into a fresh session on the new machine.
+
+## Resyncing projects later
+
+When new project directories appear on a machine that's already onboarded, paste [client/sync-projects-prompt.md](client/sync-projects-prompt.md) into a fresh Claude Code session there. The assistant will discover unregistered projects, propose them as a batch, register the confirmed ones, and push their existing local memories.
