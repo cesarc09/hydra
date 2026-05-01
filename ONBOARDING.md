@@ -75,7 +75,9 @@ bash ~/projects/hydra/client/setup.sh
 
 This materializes `~/.claude/settings.json` with hooks pointing at `$HYDRA_URL` and installs the `hydra` CLI. If `pip install -e` errors with PEP 668, retry with `pip install --user -e ~/projects/hydra/client`.
 
-Verify: `hydra --help`.
+> **Run `setup.sh` against the Python interpreter Claude Code will see.** The SessionStart/Stop hooks invoke `python -m hydra_cli ...`, which resolves through whatever `python` is first on `PATH` when Claude Code spawns the hook — usually your *base* user/system Python, not a venv. `setup.sh` calls `pip install -e client/`, so run it from a shell where `pip` and `python` resolve to the same interpreter you want hydra installed into. If you run it from inside a venv, hydra ends up only in that venv and the hooks will silently no-op outside it. Re-run `setup.sh` after switching Python versions.
+
+Verify: `python -m hydra_cli --help` (and optionally `hydra --help` if the console shim is on PATH).
 
 ## 4. Register your projects
 

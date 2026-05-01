@@ -70,6 +70,8 @@ bash ~/projects/hydra/client/setup.sh
 
 `setup.sh` installs `~/.claude/settings.json` with hooks pointing at `$HYDRA_URL` and installs the `hydra` CLI (`pip install -e`). Put the exports in your shell profile so hooks see them in every session.
 
+Run `setup.sh` from a shell where `python` and `pip` resolve to the interpreter Claude Code will see at hook time — typically your base user/system Python, not a venv. The SessionStart/Stop hooks call `python -m hydra_cli`, so the package must be installed against whatever `python` is first on `PATH` when Claude Code spawns. Installing inside a venv pins hydra to that venv and the hooks silently no-op everywhere else.
+
 For a full walkthrough covering VSCode Remote, Windows, and initial memory sync, see [ONBOARDING.md](ONBOARDING.md).
 
 ### Verify

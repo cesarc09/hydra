@@ -6,7 +6,7 @@ One server that holds memories, CLAUDE.md, and the project registry, and watches
 
 - **Server:** Python 3.13, FastAPI, aiosqlite (SQLite in WAL mode, partial unique indexes)
 - **Frontend:** Vanilla HTML/JS, Pico CSS (dark theme), Server-Sent Events
-- **Client CLI:** `client/hydra_cli/` — stdlib `urllib`, installed via `pip install -e client/`
+- **Client CLI:** `client/hydra_cli/` — stdlib `urllib`, installed via `pip install -e client/`. Hooks invoke it as `python -m hydra_cli ...` (not the `hydra` console shim) so it works without depending on a venv-bound entry point.
 - **Auth:** Bearer token (fail-closed unless `HYDRA_ALLOW_NO_AUTH=1`); `secrets.compare_digest` for compare
 
 ## Running Locally
