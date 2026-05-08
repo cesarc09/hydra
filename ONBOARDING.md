@@ -140,4 +140,4 @@ If you'd rather have Claude Code walk through the steps interactively, paste the
 
 ## Resyncing projects later
 
-When new project directories appear on a machine that's already onboarded, paste [client/sync-projects-prompt.md](client/sync-projects-prompt.md) into a fresh Claude Code session there. The assistant will discover unregistered projects, propose them as a batch, register the confirmed ones, and push their existing local memories.
+You normally don't need this — opening a Claude Code session in any unregistered directory now auto-registers it (subject to the server's stoplist). Paste [client/sync-projects-prompt.md](client/sync-projects-prompt.md) only when you want to backfill local memories on a machine that pre-dates auto-register, or to bulk-register directories without opening a session in each.
