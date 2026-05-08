@@ -90,6 +90,11 @@
             "timeout": 5
           },
           {
+            "type": "command",
+            "command": "python -m hydra_cli capture-remote-url 2>/dev/null || true",
+            "timeout": 5
+          },
+          {
             "type": "http",
             "url": "__HYDRA_URL__/api/hooks/event",
             "timeout": 5,

@@ -111,7 +111,12 @@ Start a fresh Claude Code session inside a registered project. Within a second i
 
 Claude Code's **Remote Control** feature lets you reach a running session from the Claude mobile app. Inside any Claude Code session, run `/config` and turn on "Enable Remote Control for all sessions" so it's auto-enabled per session.
 
-The URL the CLI prints (`https://claude.ai/code/session_...`) isn't exposed to external tooling, so Hydra can't capture it automatically. Each session card on the dashboard has a field to paste this URL once per session — after which the card's "Open Remote Control" button deep-links to that specific session from your phone.
+How Hydra picks up the URL depends on how you run Claude Code:
+
+- **Terminal (`claude` CLI):** the Stop hook scans the session transcript for the `bridge_status` event the CLI writes when `/remote-control` is active and PUTs the URL to Hydra automatically. No paste needed.
+- **VS Code panel:** the extension doesn't write `bridge_status` to the transcript, so auto-capture is a no-op there. Each session card on the dashboard has a field to paste the `https://claude.ai/code/session_...` URL once per session.
+
+Either way, the card's "Open Remote Control" button deep-links to the right session from your phone.
 
 ## Troubleshooting
 

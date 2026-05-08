@@ -58,9 +58,10 @@ server/
     slug.py            — Slug normalization + stoplist for auto-registered projects
 client/
   hydra_cli/
-    __main__.py       — CLI dispatch (memory, project, config, sync)
+    __main__.py       — CLI dispatch (memory, project, config, sync, capture-remote-url)
     api.py            — Stdlib urllib + bearer token + User-Agent header
     sync.py           — Bidirectional memory sync, frontmatter parse, MEMORY.md regen
+    remote.py         — Stop-hook entry: scans transcript for bridge_status, PUTs URL
   settings.json       — Claude Code settings template (__HYDRA_URL__ placeholder)
   setup.sh            — Copies settings.json with URL substitution + installs hydra CLI
 static/
@@ -95,6 +96,7 @@ schema.sql            — DDL; sessions.archived_at, memories has project_slug F
 - **CLI sync:** `python -m hydra_cli sync --cwd <path>` maps cwd → project slug via `/api/projects` registry, pulls globals + project-pinned memories to `~/.claude/projects/<dir-hash>/memory/`, regenerates `MEMORY.md` as a flat index.
 - **Auto-register:** unregistered cwds POST to `/api/projects/auto-register` on SessionStart's pull. Server applies a stoplist (`server/services/slug.py` — `home`, `tmp`, `Downloads`, …) and either creates a new slug, attaches this machine's path to an existing slug, or skips with a reason. Auto-flagged entries (`projects.auto_registered_at`, `project_paths.auto_registered_at`) surface in the `/memory` dashboard's **Pending review** section with Confirm/Delete actions.
 - **Editor deep-links:** `editors.json` maps instance_id → editor URI scheme (vscode://, cursor://, wsl, ssh-remote, jetbrains).
+- **Remote Control URL capture:** Stop hook runs `python -m hydra_cli capture-remote-url`, which scans `transcript_path` for `{type:"system",subtype:"bridge_status",url:...}` and PUTs the latest URL to `/api/sessions/{id}/remote-control-url`. Empirically only `entrypoint=cli` Claude Code writes this event; `entrypoint=claude-vscode` is silent there, so VS Code users keep using the dashboard's manual-paste input on each session card. Filter on the JSON shape, not substring grep — user/assistant text quoting "bridge_status" can otherwise contaminate the scan.
 
 ## Conventions
 

@@ -8,6 +8,7 @@ import os
 import sys
 
 from hydra_cli import api
+from hydra_cli.remote import cmd_capture_remote_url
 from hydra_cli.sync import cmd_sync
 
 
@@ -260,6 +261,12 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--cwd", help="override cwd (hooks pass $PWD)")
     sync.add_argument("--dry-run", action="store_true")
 
+    # --- capture-remote-url (Stop hook entry; reads payload from stdin) ---
+    sub.add_parser(
+        "capture-remote-url",
+        help="hook: scan transcript for /remote-control URL and PUT it to Hydra",
+    )
+
     return parser
 
 
@@ -278,6 +285,7 @@ DISPATCH = {
     ("config", "get-claude-md"): cmd_config_get_claude_md,
     ("config", "put-claude-md"): cmd_config_put_claude_md,
     ("sync", None): cmd_sync,
+    ("capture-remote-url", None): cmd_capture_remote_url,
 }
 
 
@@ -292,9 +300,10 @@ def main() -> None:
         parser.print_help()
         sys.exit(1)
 
-    # `sync` is a leaf command; other groups require a subcommand.
+    # `sync` and `capture-remote-url` are leaf commands; others need a subcommand.
     command = getattr(args, "command", None)
-    if args.group != "sync" and not command:
+    leaf_groups = {"sync", "capture-remote-url"}
+    if args.group not in leaf_groups and not command:
         parser.print_help()
         sys.exit(1)
 
