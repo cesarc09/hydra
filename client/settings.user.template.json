@@ -1,0 +1,13 @@
+{
+  "autoMemoryEnabled": true,
+  "awaySummaryEnabled": true,
+  "attribution": {
+    "pr": "",
+    "commit": ""
+  },
+  "effortLevel": "max",
+  "showThinkingSummaries": true,
+  "respectGitignore": true,
+  "showTurnDuration": true,
+  "statusLine": {}
+}

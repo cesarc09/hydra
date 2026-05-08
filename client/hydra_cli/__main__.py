@@ -8,6 +8,7 @@ import os
 import sys
 
 from hydra_cli import api
+from hydra_cli.apply_settings import cmd_apply_settings
 from hydra_cli.remote import cmd_capture_remote_url
 from hydra_cli.sync import cmd_sync
 
@@ -267,6 +268,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="hook: scan transcript for /remote-control URL and PUT it to Hydra",
     )
 
+    # --- apply-settings (setup.sh entry; merges Hydra template + user prefs) ---
+    aps = sub.add_parser(
+        "apply-settings",
+        help="merge Hydra hooks template + user prefs into ~/.claude/settings.json",
+    )
+    aps.add_argument("--hydra-template", required=True)
+    aps.add_argument("--user-template", required=True)
+    aps.add_argument("--user-file", required=True)
+    aps.add_argument("--output", required=True)
+    aps.add_argument("--hydra-url", required=True)
+    aps.add_argument("--hydra-repo-path", required=True)
+
     return parser
 
 
@@ -286,6 +299,7 @@ DISPATCH = {
     ("config", "put-claude-md"): cmd_config_put_claude_md,
     ("sync", None): cmd_sync,
     ("capture-remote-url", None): cmd_capture_remote_url,
+    ("apply-settings", None): cmd_apply_settings,
 }
 
 
@@ -300,9 +314,10 @@ def main() -> None:
         parser.print_help()
         sys.exit(1)
 
-    # `sync` and `capture-remote-url` are leaf commands; others need a subcommand.
+    # `sync`, `capture-remote-url`, and `apply-settings` are leaf commands;
+    # others need a subcommand.
     command = getattr(args, "command", None)
-    leaf_groups = {"sync", "capture-remote-url"}
+    leaf_groups = {"sync", "capture-remote-url", "apply-settings"}
     if args.group not in leaf_groups and not command:
         parser.print_help()
         sys.exit(1)

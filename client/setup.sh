@@ -1,19 +1,13 @@
 #!/bin/bash
-# Copies claude-config files into ~/.claude/
-# Run this on each machine after cloning or pulling updates.
-#
-# On Linux/macOS with symlink support, use: ./setup.sh --link
-# On Windows (Git Bash), default copy mode is used.
+# Renders ~/.claude/settings.json by merging the Hydra hooks template with
+# the user's local preference file (~/.claude/settings.user.json). On first
+# run the user file is scaffolded from client/settings.user.template.json.
+# Run on each machine after cloning or pulling updates.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE_DIR="$HOME/.claude"
-MODE="copy"
-
-if [ "$1" = "--link" ]; then
-    MODE="link"
-fi
 
 mkdir -p "$CLAUDE_DIR"
 
@@ -25,38 +19,32 @@ HYDRA_URL="${HYDRA_URL:-http://localhost:8400}"
 # so the SessionStart hook can `cd` back here regardless of where you cloned.
 HYDRA_REPO_PATH="$(dirname "$SCRIPT_DIR")"
 
-for file in settings.json; do
-    src="$SCRIPT_DIR/$file"
-    target="$CLAUDE_DIR/$file"
-
-    if [ -f "$target" ] && [ ! -L "$target" ]; then
-        if ! diff -q "$src" "$target" > /dev/null 2>&1; then
-            echo "Backing up existing $target to $target.bak"
-            cp "$target" "$target.bak"
-        fi
-    fi
-
-    # settings.json is a template — substitute placeholders at install time.
-    # Always materialize (link mode would leave placeholders unresolved).
-    sed -e "s|__HYDRA_URL__|${HYDRA_URL}|g" \
-        -e "s|__HYDRA_REPO_PATH__|${HYDRA_REPO_PATH}|g" \
-        "$src" > "$target"
-    echo "  Installed: $file -> $target  (HYDRA_URL=${HYDRA_URL}, repo=${HYDRA_REPO_PATH})"
-done
-
-if [ "$MODE" = "link" ]; then
-    echo "  Note: --link ignored for settings.json (it's a template)."
-fi
-
-echo ""
-echo "Claude config deployed from $SCRIPT_DIR (mode: $MODE)"
-
-# Install hydra CLI (editable, so git pull keeps it current)
+# Install hydra CLI first — `apply-settings` does the merge below.
 if command -v pip >/dev/null 2>&1; then
     pip install -e "$SCRIPT_DIR" --quiet 2>/dev/null
     echo "  Installed: hydra CLI"
 fi
 
+TARGET="$CLAUDE_DIR/settings.json"
+USER_FILE="$CLAUDE_DIR/settings.user.json"
+
+# Back up an existing rendered settings.json before rewriting it.
+if [ -f "$TARGET" ] && [ ! -L "$TARGET" ]; then
+    cp "$TARGET" "$TARGET.bak"
+fi
+
+python -m hydra_cli apply-settings \
+    --hydra-template "$SCRIPT_DIR/settings.json" \
+    --user-template "$SCRIPT_DIR/settings.user.template.json" \
+    --user-file "$USER_FILE" \
+    --output "$TARGET" \
+    --hydra-url "$HYDRA_URL" \
+    --hydra-repo-path "$HYDRA_REPO_PATH"
+
+echo "  Installed: settings.json -> $TARGET  (HYDRA_URL=${HYDRA_URL}, repo=${HYDRA_REPO_PATH})"
+echo "  User prefs:                 $USER_FILE  (edit to customize; survives re-runs)"
+echo ""
+echo "Claude config deployed from $SCRIPT_DIR"
 echo ""
 
 # Check Hydra env vars
