@@ -41,7 +41,10 @@ CREATE TABLE IF NOT EXISTS projects (
     slug TEXT PRIMARY KEY,
     description TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    -- Set when the project was created by the auto-register endpoint; cleared
+    -- by the dashboard "Confirm" action. NULL means manually registered.
+    auto_registered_at TEXT
 );
 
 -- One canonical path per (slug, instance_id). Re-registering the same slug
@@ -52,6 +55,8 @@ CREATE TABLE IF NOT EXISTS project_paths (
     path TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    -- Set when this path was attached by auto-register; cleared by Confirm.
+    auto_registered_at TEXT,
     PRIMARY KEY (slug, instance_id)
 );
 

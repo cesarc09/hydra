@@ -67,6 +67,18 @@ async def _migrate(conn: aiosqlite.Connection) -> None:
         )
         await conn.execute("ALTER TABLE projects DROP COLUMN path")
 
+    # auto_registered_at columns (added when /api/projects/auto-register landed)
+    cursor = await conn.execute("PRAGMA table_info(projects)")
+    proj_cols = {row[1] for row in await cursor.fetchall()}
+    if "auto_registered_at" not in proj_cols:
+        await conn.execute("ALTER TABLE projects ADD COLUMN auto_registered_at TEXT")
+    cursor = await conn.execute("PRAGMA table_info(project_paths)")
+    pp_cols = {row[1] for row in await cursor.fetchall()}
+    if "auto_registered_at" not in pp_cols:
+        await conn.execute(
+            "ALTER TABLE project_paths ADD COLUMN auto_registered_at TEXT"
+        )
+
 
 async def close_db():
     global _db

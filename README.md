@@ -33,7 +33,7 @@ Hydra is one server that solves both. A memory store and CLAUDE.md that travel w
 
 Two loops run continuously:
 
-**Context loop** — `python -m hydra_cli sync` reconciles each machine's local memory dir (`~/.claude/projects/<dir>/memory/`) with the server. A SessionStart hook runs `python -m hydra_cli sync --pull` before Claude sees the session; a Stop hook runs `python -m hydra_cli sync --push` at turn end. Memories are typed: `user`/`feedback` are global (available everywhere), `project`/`reference` are pinned to the project the cwd maps to.
+**Context loop** — `python -m hydra_cli sync` reconciles each machine's local memory dir (`~/.claude/projects/<dir>/memory/`) with the server. A SessionStart hook runs `python -m hydra_cli sync --pull` before Claude sees the session; a Stop hook runs `python -m hydra_cli sync --push` at turn end. Memories are typed: `user`/`feedback` are global (available everywhere), `project`/`reference` are pinned to the project the cwd maps to. Unregistered cwds auto-register via the server (with a stoplist for `~`, `~/Downloads`, `/tmp`, etc.) and surface in the dashboard's **Pending review** section for confirmation or deletion.
 
 **Observation loop** — every Claude Code tool call fires an HTTP hook to `/api/hooks/event`. The server tracks session state transitions (active / idle / waiting_input / ended) and broadcasts them over Server-Sent Events to any open dashboard.
 

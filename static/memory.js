@@ -27,8 +27,119 @@ async function refresh() {
 
 function render() {
     renderStats();
+    renderPendingReview();
     renderGlobals();
     renderProjects();
+}
+
+function pendingReviewItems() {
+    // One row per (project, instance_id, path) that needs review. A project
+    // with project-level auto_registered_at gets at least one row regardless
+    // of path flags; per-path flags surface separately.
+    const items = [];
+    for (const p of projects) {
+        const projectFlagged = !!p.auto_registered_at;
+        for (const path of (p.paths || [])) {
+            if (projectFlagged || path.auto_registered_at) {
+                items.push({
+                    slug: p.slug,
+                    instance_id: path.instance_id,
+                    path: path.path,
+                    auto_registered_at: path.auto_registered_at || p.auto_registered_at,
+                    projectFlagged,
+                });
+            }
+        }
+        if (projectFlagged && (p.paths || []).length === 0) {
+            // Edge case: project flagged but no paths recorded
+            items.push({
+                slug: p.slug,
+                instance_id: null,
+                path: null,
+                auto_registered_at: p.auto_registered_at,
+                projectFlagged: true,
+            });
+        }
+    }
+    items.sort((a, b) => (a.auto_registered_at || "").localeCompare(b.auto_registered_at || ""));
+    return items;
+}
+
+function renderPendingReview() {
+    const section = document.getElementById("pending-review-section");
+    const list = document.getElementById("pending-review-list");
+    const count = document.getElementById("pending-count");
+    const items = pendingReviewItems();
+    if (items.length === 0) {
+        section.hidden = true;
+        return;
+    }
+    section.hidden = false;
+    count.textContent = `(${items.length})`;
+    list.innerHTML = items.map(renderPendingRow).join("");
+}
+
+function renderPendingRow(it) {
+    const flagBadge = it.projectFlagged
+        ? `<span class="badge badge-yellow">new project</span>`
+        : `<span class="badge badge-gray">new path</span>`;
+    const pathLabel = it.path
+        ? `<span class="memory-description">${escHtml(it.instance_id)} · <code>${escHtml(it.path)}</code></span>`
+        : "";
+    return `
+        <div class="memory-row">
+            <div class="memory-head">
+                <span class="memory-name">${escHtml(it.slug)}</span>
+                ${flagBadge}
+                <span class="memory-actions">
+                    <span class="memory-action" onclick="confirmAutoRegistered('${escAttr(it.slug)}', ${it.instance_id ? `'${escAttr(it.instance_id)}'` : "null"}, ${it.projectFlagged})">Confirm</span>
+                    <span class="memory-action memory-action-danger" onclick="deletePendingEntry('${escAttr(it.slug)}', ${it.instance_id ? `'${escAttr(it.instance_id)}'` : "null"}, ${it.projectFlagged})">Delete</span>
+                </span>
+            </div>
+            ${pathLabel}
+        </div>
+    `;
+}
+
+async function confirmAutoRegistered(slug, instanceId, projectFlagged) {
+    // Always clear the path-level flag if we have one. If the project itself
+    // is flagged, also clear the project-level flag.
+    if (instanceId) {
+        const r = await apiFetch(`${API}/projects/${encodeURIComponent(slug)}/paths/${encodeURIComponent(instanceId)}/confirm`, { method: "POST" });
+        if (!r.ok && r.status !== 404) {
+            alert(`Confirm failed: HTTP ${r.status}`);
+            return;
+        }
+    }
+    if (projectFlagged) {
+        const r = await apiFetch(`${API}/projects/${encodeURIComponent(slug)}/confirm`, { method: "POST" });
+        if (!r.ok) {
+            alert(`Confirm (project) failed: HTTP ${r.status}`);
+            return;
+        }
+    }
+    await refresh();
+}
+
+async function deletePendingEntry(slug, instanceId, projectFlagged) {
+    // If only this machine's path is flagged on an otherwise-confirmed project,
+    // delete just the path. Otherwise nuke the whole project.
+    if (!projectFlagged && instanceId) {
+        if (!confirm(`Detach ${instanceId}'s path from project '${slug}'?`)) return;
+        const r = await apiFetch(`${API}/projects/${encodeURIComponent(slug)}/paths/${encodeURIComponent(instanceId)}`, { method: "DELETE" });
+        if (r.status !== 204) {
+            alert(`Delete path failed: HTTP ${r.status}`);
+            return;
+        }
+    } else {
+        if (!confirm(`Delete project '${slug}' and all its paths?`)) return;
+        const r = await apiFetch(`${API}/projects/${encodeURIComponent(slug)}`, { method: "DELETE" });
+        if (r.status !== 204) {
+            alert(`Delete project failed: HTTP ${r.status}`);
+            return;
+        }
+    }
+    await refresh();
 }
 
 function renderStats() {

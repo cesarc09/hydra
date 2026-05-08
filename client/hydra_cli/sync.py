@@ -133,11 +133,11 @@ def resolve_project_slug(cwd: str, *, auto_attach: bool = True) -> str | None:
     at different filesystem paths on different machines, and the cwd itself
     is unambiguous enough that instance_id scoping is unnecessary here.
 
-    If no registered path matches and `auto_attach` is set, tries the cwd's
-    basename as a slug: if a project with that slug already exists, attaches
-    the cwd as a new path on this machine. Brand-new slugs are never created
-    automatically — that requires `hydra project attach --slug …` or
-    `hydra project create`.
+    If no registered path matches and `auto_attach` is set, defers to the
+    server's `/api/projects/auto-register` endpoint, which applies a stoplist
+    and either creates a brand-new slug, attaches this machine to an existing
+    one, or skips with a reason. Auto-registered entries are flagged in the
+    DB so the dashboard can surface them for review.
     """
     status, body = api.get("/api/projects")
     if status != 200:
@@ -152,26 +152,32 @@ def resolve_project_slug(cwd: str, *, auto_attach: bool = True) -> str | None:
     if not auto_attach:
         return None
 
-    basename = os.path.basename(target)
-    if basename and basename in {p["slug"] for p in projects}:
-        attach_project_path(basename, target)
+    return _auto_register(target)
+
+
+def _auto_register(cwd: str) -> str | None:
+    """POST to /api/projects/auto-register. Returns the slug on
+    created/attached/existing; None on skipped (with the server's reason
+    printed to stderr)."""
+    status, body = api.post("/api/projects/auto-register", {"cwd": cwd})
+    if status != 200:
+        raise RuntimeError(
+            f"Failed to auto-register {cwd}: {_api_error(status, body)}"
+        )
+    resp = json.loads(body)
+    if resp["status"] == "skipped":
         print(
-            f"  auto-attached {target} to existing project '{basename}'",
+            f"  auto-register skipped for {cwd}: {resp.get('reason') or 'unspecified'}",
             file=sys.stderr,
         )
-        return basename
-    return None
-
-
-def attach_project_path(slug: str, path: str) -> dict[str, Any]:
-    """POST the (slug, cwd) pair to the registry. Idempotent: creates the
-    project if the slug is new, otherwise adds/updates this machine's path."""
-    status, body = api.post("/api/projects", {"slug": slug, "path": path})
-    if status not in (200, 201):
-        raise RuntimeError(
-            f"Failed to attach '{slug}' → {path}: {_api_error(status, body)}"
+        return None
+    if resp["status"] in ("created", "attached"):
+        print(
+            f"  auto-{resp['status']} {cwd} as project '{resp['slug']}'"
+            " (review on dashboard)",
+            file=sys.stderr,
         )
-    return json.loads(body)
+    return resp.get("slug")
 
 
 def fetch_server_memories(project_slug: str | None) -> list[dict[str, Any]]:

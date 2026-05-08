@@ -52,9 +52,10 @@ server/
                         POST /sessions/{id}/archive|unarchive + /sessions/archive-ended
     config.py         — GET/PUT /api/config/claude-md
     memory.py         — CRUD /api/memory with upsert on (name, project_slug) + filtered GET
-    projects.py       — CRUD /api/projects
+    projects.py       — CRUD /api/projects + auto-register + confirm endpoints
   services/
     session_manager.py — State machine, bounded SSE broadcast, DB writes, archive ops
+    slug.py            — Slug normalization + stoplist for auto-registered projects
 client/
   hydra_cli/
     __main__.py       — CLI dispatch (memory, project, config, sync)
@@ -64,7 +65,8 @@ client/
   setup.sh            — Copies settings.json with URL substitution + installs hydra CLI
 static/
   index.html, app.js   — Sessions dashboard (/); archive, Recent Events chip filter
-  memory.html, memory.js — Memory dashboard (/memory); browse, delete, copy, move
+  memory.html, memory.js — Memory dashboard (/memory); browse, delete, copy, move,
+                            pending-review queue for auto-registered projects
   utils.js             — Shared apiFetch + token handling, escHtml (loaded before page JS)
   style.css            — Shared styles (no build step, bearer-token prompt)
 tests/
@@ -91,6 +93,7 @@ schema.sql            — DDL; sessions.archived_at, memories has project_slug F
 - **Body size limits:** Per-path in `server/app.py` (64KB hooks, 1MB CLAUDE.md, 256KB default); 413 on overrun.
 - **DB access:** `get_db()` is a module-level singleton. Tests patch `server.db._db` to an isolated connection via the `client` fixture.
 - **CLI sync:** `python -m hydra_cli sync --cwd <path>` maps cwd → project slug via `/api/projects` registry, pulls globals + project-pinned memories to `~/.claude/projects/<dir-hash>/memory/`, regenerates `MEMORY.md` as a flat index.
+- **Auto-register:** unregistered cwds POST to `/api/projects/auto-register` on SessionStart's pull. Server applies a stoplist (`server/services/slug.py` — `home`, `tmp`, `Downloads`, …) and either creates a new slug, attaches this machine's path to an existing slug, or skips with a reason. Auto-flagged entries (`projects.auto_registered_at`, `project_paths.auto_registered_at`) surface in the `/memory` dashboard's **Pending review** section with Confirm/Delete actions.
 - **Editor deep-links:** `editors.json` maps instance_id → editor URI scheme (vscode://, cursor://, wsl, ssh-remote, jetbrains).
 
 ## Conventions

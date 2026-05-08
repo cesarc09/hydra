@@ -23,6 +23,12 @@
     <main class="container">
         <section id="memory-stats" class="memory-stats">Loading…</section>
 
+        <section id="pending-review-section" hidden>
+            <h3 class="section-title">Pending review <span id="pending-count" class="memory-count"></span></h3>
+            <p class="event-filter-label">Auto-registered by SessionStart hooks. Confirm to keep, delete to remove.</p>
+            <div id="pending-review-list" class="memory-list"></div>
+        </section>
+
         <section>
             <h3 class="section-title">Global memories <span id="global-count" class="memory-count"></span></h3>
             <div id="global-memories" class="memory-list">

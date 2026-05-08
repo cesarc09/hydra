@@ -104,6 +104,7 @@ class ProjectUpdate(BaseModel):
 class ProjectPath(BaseModel):
     instance_id: str
     path: str
+    auto_registered_at: str | None = None
 
 
 class ProjectItem(BaseModel):
@@ -112,3 +113,22 @@ class ProjectItem(BaseModel):
     paths: list[ProjectPath] = Field(default_factory=list)
     created_at: str
     updated_at: str
+    auto_registered_at: str | None = None
+
+
+class AutoRegisterRequest(BaseModel):
+    """Body for POST /api/projects/auto-register. Server derives the slug from
+    the cwd basename and applies the stoplist."""
+    cwd: str = Field(min_length=1, max_length=4096)
+
+
+class AutoRegisterResponse(BaseModel):
+    """Status values:
+    - "existing": cwd was already registered for this (slug, instance_id).
+    - "attached": slug already existed; this machine's path was added.
+    - "created": brand-new slug; project + path both created.
+    - "skipped": stoplist rejected the derived slug; no write happened.
+    """
+    status: Literal["existing", "attached", "created", "skipped"]
+    slug: str | None = None
+    reason: str | None = None

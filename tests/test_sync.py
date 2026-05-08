@@ -10,6 +10,8 @@ from typing import Any
 import pytest
 from hydra_cli import sync as sync_mod
 
+from server.services.slug import derive_slug_from_cwd
+
 # --- Fake API fixture ------------------------------------------------------
 
 
@@ -78,6 +80,28 @@ class FakeAPI:
             }
             self.projects.append(created)
             return 201, json.dumps(created)
+        if path == "/api/projects/auto-register":
+            cwd = payload["cwd"]
+            for p in self.projects:
+                for e in p.get("paths", []):
+                    if e.get("path") == cwd and e.get("instance_id") == "test":
+                        return 200, json.dumps(
+                            {"status": "existing", "slug": p["slug"]}
+                        )
+            slug, reason = derive_slug_from_cwd(cwd)
+            if slug is None:
+                return 200, json.dumps({"status": "skipped", "reason": reason})
+            for p in self.projects:
+                if p["slug"] == slug:
+                    p.setdefault("paths", []).append(
+                        {"instance_id": "test", "path": cwd}
+                    )
+                    return 200, json.dumps({"status": "attached", "slug": slug})
+            self.projects.append({
+                "slug": slug,
+                "paths": [{"instance_id": "test", "path": cwd}],
+            })
+            return 200, json.dumps({"status": "created", "slug": slug})
         if path == "/api/memory":
             key = (payload["name"], payload.get("project_slug"))
             for i, existing in enumerate(self.memories):
@@ -198,30 +222,41 @@ def test_resolve_project_slug_matches_any_registered_path(
 def test_resolve_project_slug_auto_attaches_on_basename_match(
     fake_api: FakeAPI, capsys: pytest.CaptureFixture[str]
 ):
-    """Cwd whose basename matches an existing slug gets auto-attached."""
+    """Cwd whose basename matches an existing slug gets auto-attached via
+    the server's /api/projects/auto-register endpoint."""
     fake_api.projects = [{
         "slug": "hydra",
         "paths": [{"instance_id": "vps", "path": "/home/giosue/projects/hydra"}],
     }]
     slug = sync_mod.resolve_project_slug("/Users/me/work/hydra")
     assert slug == "hydra"
-    # Attached via POST — fake api's post-handler records projects, not
-    # project_paths, so we just verify a post happened by listing /api/projects
-    # and checking the message
     err = capsys.readouterr().err
     assert "auto-attached" in err
 
 
-def test_resolve_project_slug_no_auto_attach_when_basename_unknown(
-    fake_api: FakeAPI,
+def test_resolve_project_slug_auto_creates_new_slug(
+    fake_api: FakeAPI, capsys: pytest.CaptureFixture[str]
 ):
-    """Cwd whose basename doesn't match any existing slug returns None —
-    never auto-creates a brand-new slug."""
+    """Cwd whose basename doesn't match any existing slug auto-creates one
+    via /api/projects/auto-register (the dashboard surfaces it for review)."""
     fake_api.projects = [{
         "slug": "hydra",
         "paths": [{"instance_id": "vps", "path": "/home/giosue/projects/hydra"}],
     }]
-    assert sync_mod.resolve_project_slug("/Users/me/scratch/unrelated") is None
+    assert sync_mod.resolve_project_slug("/Users/me/scratch/unrelated") == "unrelated"
+    err = capsys.readouterr().err
+    assert "auto-created" in err
+
+
+def test_resolve_project_slug_skipped_for_stoplisted_basename(
+    fake_api: FakeAPI, capsys: pytest.CaptureFixture[str]
+):
+    """Stoplist basenames (Downloads, tmp, ...) return None and don't write
+    anything to the registry."""
+    assert sync_mod.resolve_project_slug("/home/giosue/Downloads") is None
+    assert fake_api.projects == []
+    err = capsys.readouterr().err
+    assert "skipped" in err
 
 
 def test_resolve_project_slug_auto_attach_disabled(fake_api: FakeAPI):
@@ -287,16 +322,17 @@ def test_push_uploads_local(fake_api: FakeAPI, memory_dir: Path):
     assert ("p1", "proj") in names
 
 
-def test_push_skips_project_memory_when_cwd_unregistered(
+def test_push_skips_project_memory_when_cwd_stoplisted(
     fake_api: FakeAPI, memory_dir: Path, capsys: pytest.CaptureFixture[str]
 ):
-    # No project registered for cwd
+    """A stoplist basename (Downloads, tmp, ...) returns no slug from
+    auto-register, so project-scoped memories from that cwd are skipped."""
     memory_dir.mkdir(parents=True)
     (memory_dir / "p1.md").write_text(
         "---\nname: p1\ndescription: d\ntype: project\n---\nbody\n",
         encoding="utf-8",
     )
-    code = sync_mod.run_sync("/test/proj", do_pull=False, do_push=True)
+    code = sync_mod.run_sync("/home/me/Downloads", do_pull=False, do_push=True)
     assert code == 0
     assert fake_api.memories == []
     err = capsys.readouterr().err

@@ -4,7 +4,15 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 
 from server.auth import require_auth
 from server.db import get_db
-from server.models import ProjectCreate, ProjectItem, ProjectPath, ProjectUpdate
+from server.models import (
+    AutoRegisterRequest,
+    AutoRegisterResponse,
+    ProjectCreate,
+    ProjectItem,
+    ProjectPath,
+    ProjectUpdate,
+)
+from server.services.slug import derive_slug_from_cwd
 
 router = APIRouter(
     prefix="/api/projects", tags=["projects"], dependencies=[Depends(require_auth)]
@@ -17,10 +25,18 @@ def _now() -> str:
 
 async def _fetch_paths(db, slug: str) -> list[ProjectPath]:
     rows = await db.execute_fetchall(
-        "SELECT instance_id, path FROM project_paths WHERE slug = ? ORDER BY instance_id",
+        "SELECT instance_id, path, auto_registered_at FROM project_paths"
+        " WHERE slug = ? ORDER BY instance_id",
         (slug,),
     )
-    return [ProjectPath(instance_id=r["instance_id"], path=r["path"]) for r in rows]
+    return [
+        ProjectPath(
+            instance_id=r["instance_id"],
+            path=r["path"],
+            auto_registered_at=r["auto_registered_at"],
+        )
+        for r in rows
+    ]
 
 
 async def _build_item(db, row) -> ProjectItem:
@@ -30,6 +46,7 @@ async def _build_item(db, row) -> ProjectItem:
         paths=await _fetch_paths(db, row["slug"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        auto_registered_at=row["auto_registered_at"],
     )
 
 
@@ -130,6 +147,115 @@ async def delete_project_path(slug: str, instance_id: str):
     db = await get_db()
     cursor = await db.execute(
         "DELETE FROM project_paths WHERE slug = ? AND instance_id = ?",
+        (slug, instance_id),
+    )
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Path not registered")
+    await db.commit()
+
+
+# --- Auto-registration ---
+
+
+@router.post("/auto-register")
+async def auto_register(
+    body: AutoRegisterRequest,
+    x_instance_id: str = Header(default="unknown"),
+) -> AutoRegisterResponse:
+    """Idempotent auto-registration of (cwd, instance_id). Hooks call this on
+    SessionStart so new projects appear in the registry without manual setup.
+
+    Server-side policy:
+    - If (instance_id, cwd) is already registered, return its slug.
+    - Otherwise derive a slug from the cwd basename. If the basename hits the
+      stoplist or normalizes to nothing usable, return `skipped` with a reason
+      and don't write anything.
+    - If the slug already exists in projects, attach this machine's path under
+      it (status `attached`). The path row gets `auto_registered_at` so the
+      dashboard can flag it for review.
+    - If the slug is new, create the project and the path row, both flagged
+      `auto_registered_at`.
+    """
+    db = await get_db()
+    cwd = body.cwd
+
+    # Already registered?
+    rows = list(await db.execute_fetchall(
+        "SELECT slug FROM project_paths WHERE instance_id = ? AND path = ?",
+        (x_instance_id, cwd),
+    ))
+    if rows:
+        return AutoRegisterResponse(status="existing", slug=rows[0]["slug"])
+
+    slug, reason = derive_slug_from_cwd(cwd)
+    if slug is None:
+        return AutoRegisterResponse(status="skipped", reason=reason)
+
+    now = _now()
+    # Does the slug already exist?
+    existing = list(await db.execute_fetchall(
+        "SELECT slug FROM projects WHERE slug = ?", (slug,)
+    ))
+
+    if existing:
+        # Attach this machine's path. ON CONFLICT updates path; auto flag
+        # only set on insert (this branch only runs when there's no row for
+        # this (slug, instance_id), since the early-return above covered the
+        # case where path matches exactly. A row could still exist with a
+        # different path on this instance — treat that as "this machine moved
+        # the project", and don't reset the auto flag if it was already cleared
+        # by Confirm.)
+        await db.execute(
+            "INSERT INTO project_paths"
+            " (slug, instance_id, path, created_at, updated_at, auto_registered_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(slug, instance_id) DO UPDATE SET"
+            "   path = excluded.path,"
+            "   updated_at = excluded.updated_at",
+            (slug, x_instance_id, cwd, now, now, now),
+        )
+        await db.execute(
+            "UPDATE projects SET updated_at = ? WHERE slug = ?", (now, slug)
+        )
+        await db.commit()
+        return AutoRegisterResponse(status="attached", slug=slug)
+
+    # Brand-new slug: create both project and path with the auto flag.
+    await db.execute(
+        "INSERT INTO projects"
+        " (slug, description, created_at, updated_at, auto_registered_at)"
+        " VALUES (?, '', ?, ?, ?)",
+        (slug, now, now, now),
+    )
+    await db.execute(
+        "INSERT INTO project_paths"
+        " (slug, instance_id, path, created_at, updated_at, auto_registered_at)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (slug, x_instance_id, cwd, now, now, now),
+    )
+    await db.commit()
+    return AutoRegisterResponse(status="created", slug=slug)
+
+
+@router.post("/{slug}/confirm", status_code=204)
+async def confirm_project(slug: str):
+    """Clear the project-level auto_registered_at flag (i.e. reviewed)."""
+    db = await get_db()
+    cursor = await db.execute(
+        "UPDATE projects SET auto_registered_at = NULL WHERE slug = ?", (slug,)
+    )
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await db.commit()
+
+
+@router.post("/{slug}/paths/{instance_id}/confirm", status_code=204)
+async def confirm_project_path(slug: str, instance_id: str):
+    """Clear the path-level auto_registered_at flag for a specific machine."""
+    db = await get_db()
+    cursor = await db.execute(
+        "UPDATE project_paths SET auto_registered_at = NULL"
+        " WHERE slug = ? AND instance_id = ?",
         (slug, instance_id),
     )
     if cursor.rowcount == 0:
