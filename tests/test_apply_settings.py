@@ -60,7 +60,7 @@ def _ns(**kwargs: str) -> argparse.Namespace:
     return argparse.Namespace(**kwargs)
 
 
-def test_apply_scaffolds_user_file_when_absent(tmp_path: Path) -> None:
+def test_apply_scaffolds_user_file_as_template_copy(tmp_path: Path) -> None:
     hydra_tpl = tmp_path / "hydra.json"
     hydra_tpl.write_text(json.dumps({"hooks": {}, "effortLevel": "high"}))
     user_tpl = tmp_path / "user.template.json"
@@ -79,8 +79,39 @@ def test_apply_scaffolds_user_file_when_absent(tmp_path: Path) -> None:
         )
     )
 
-    assert user_file.exists()
+    # Scaffold copies the template so users see all knobs and edit in place.
+    assert json.loads(user_file.read_text()) == {"effortLevel": "max"}
     assert json.loads(output.read_text())["effortLevel"] == "max"
+
+
+def test_apply_template_default_flows_when_user_file_lacks_key(tmp_path: Path) -> None:
+    """Regression: a user file without `statusLine` must NOT mask the template default."""
+    hydra_tpl = tmp_path / "hydra.json"
+    hydra_tpl.write_text(json.dumps({"hooks": {}}))
+    user_tpl = tmp_path / "user.template.json"
+    user_tpl.write_text(
+        json.dumps(
+            {"statusLine": {"type": "command", "command": "~/.claude/statusline.sh"}}
+        )
+    )
+    user_file = tmp_path / "user.json"
+    user_file.write_text(json.dumps({"effortLevel": "low"}))  # no statusLine
+    output = tmp_path / "out.json"
+
+    cmd_apply_settings(
+        _ns(
+            hydra_template=str(hydra_tpl),
+            user_template=str(user_tpl),
+            user_file=str(user_file),
+            output=str(output),
+            hydra_url="http://h",
+            hydra_repo_path="/r",
+        )
+    )
+
+    out = json.loads(output.read_text())
+    assert out["statusLine"] == {"type": "command", "command": "~/.claude/statusline.sh"}
+    assert out["effortLevel"] == "low"  # user override still wins
 
 
 def test_apply_preserves_existing_user_file(tmp_path: Path) -> None:
@@ -165,6 +196,9 @@ def test_apply_end_to_end_with_real_template(tmp_path: Path) -> None:
     # User template keys present
     assert out["effortLevel"] == "max"
     assert out["attribution"] == {"pr": "", "commit": ""}
+    # statusLine has the shape Claude Code requires (rejects bare `{}`).
+    assert out["statusLine"]["type"] == "command"
+    assert out["statusLine"]["command"]
     # Placeholders substituted
     serialized = output.read_text()
     assert "__HYDRA_URL__" not in serialized

@@ -6,8 +6,10 @@ Shared Claude Code configuration — personal rules and hook settings synced acr
 
 | File | Purpose |
 |------|---------|
-| `settings.json` | User-level settings including Hydra hook configuration |
-| `setup.sh` | Deploys these files to `~/.claude/` (copy on Windows, symlink on Linux) |
+| `settings.json` | Hydra hooks template (HTTP hooks + sync commands; `__HYDRA_URL__` placeholder) |
+| `settings.user.template.json` | Default user preferences (`effortLevel`, `attribution`, `statusLine`, …) |
+| `statusline.sh` | Default Claude Code status-line script (context-window progress bar) |
+| `setup.sh` | Pip-installs `hydra_cli` and renders `~/.claude/settings.json` from the layers above |
 
 ## How Claude Code loads configuration
 
@@ -29,17 +31,39 @@ export HYDRA_INSTANCE_ID="machine-name"    # unique per machine
 export HYDRA_AUTH_TOKEN="your-token"        # must match Hydra server
 
 # Deploy
-./client/setup.sh          # Windows (Git Bash) — copies files
-./client/setup.sh --link   # Linux / macOS / WSL — creates symlinks
+bash client/setup.sh
 ```
 
-## Updating rules
+## How `~/.claude/settings.json` is composed
 
-1. Edit `settings.json` in this repo
-2. Commit and push
-3. On each machine: `cd ~/projects/hydra && git pull && ./client/setup.sh`
+`setup.sh` runs `python -m hydra_cli apply-settings`, which merges three
+layers in priority order:
 
-Or wait — the `SessionStart` hook automatically pulls and deploys on every new Claude Code session.
+1. **Hydra hooks template** — `client/settings.json` (HTTP hooks + sync commands).
+2. **User-pref defaults** — `client/settings.user.template.json` (`effortLevel`, `attribution`, `statusLine`, …).
+3. **Your overrides** — `~/.claude/settings.user.json`. Scaffolded as a *copy* of the template on first run so you see every available knob.
+
+For each event under `hooks`, Hydra's matcher-groups come first and any user
+matcher-groups append. For other top-level keys, later layers override earlier
+ones (so your overrides beat both templates).
+
+### Customizing prefs
+
+Edit `~/.claude/settings.user.json`:
+
+- **Change a value** — your value wins on the next render.
+- **Delete a field** — falls back to the template default. This is how to opt out of a default you don't want without removing it from the shipped template (which would affect everyone else). For example, drop the `statusLine` block to use Claude Code's built-in status line instead of `~/.claude/statusline.sh`.
+
+`~/.claude/settings.user.json` is never overwritten after the initial scaffold —
+your edits survive every `setup.sh` re-run.
+
+## Updating shared rules / hooks
+
+1. Edit `client/settings.json` (hooks) or `client/settings.user.template.json` (defaults).
+2. Commit and push.
+3. On each machine: `cd ~/projects/hydra && git pull && bash client/setup.sh`.
+
+The `SessionStart` hook also pulls and re-renders automatically on every new Claude Code session.
 
 ## Hydra hooks
 

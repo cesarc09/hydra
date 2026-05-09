@@ -41,6 +41,15 @@ python -m hydra_cli apply-settings \
     --hydra-url "$HYDRA_URL" \
     --hydra-repo-path "$HYDRA_REPO_PATH"
 
+# Scaffold the default status-line script. Only on first run — user edits stay.
+STATUSLINE_SRC="$SCRIPT_DIR/statusline.sh"
+STATUSLINE_DST="$CLAUDE_DIR/statusline.sh"
+if [ -f "$STATUSLINE_SRC" ] && [ ! -f "$STATUSLINE_DST" ]; then
+    cp "$STATUSLINE_SRC" "$STATUSLINE_DST"
+    chmod +x "$STATUSLINE_DST"
+    echo "  Scaffolded: $STATUSLINE_DST  (edit to customize; survives re-runs)"
+fi
+
 echo "  Installed: settings.json -> $TARGET  (HYDRA_URL=${HYDRA_URL}, repo=${HYDRA_REPO_PATH})"
 echo "  User prefs:                 $USER_FILE  (edit to customize; survives re-runs)"
 echo ""

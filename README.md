@@ -68,7 +68,7 @@ export HYDRA_INSTANCE_ID="$(hostname)"
 bash ~/projects/hydra/client/setup.sh
 ```
 
-`setup.sh` installs `~/.claude/settings.json` with hooks pointing at `$HYDRA_URL` and installs the `hydra` CLI (`pip install -e`). Put the exports in your shell profile so hooks see them in every session.
+`setup.sh` installs `~/.claude/settings.json` with hooks pointing at `$HYDRA_URL` and installs the `hydra` CLI (`pip install -e`). It also scaffolds `~/.claude/settings.user.json` on first run — your personal layer for prefs like `effortLevel`, `attribution`, and `statusLine`. Edit a value to override, or delete a field to fall back to the template default. See [client/README.md](client/README.md) for the full layering model. Put the exports in your shell profile so hooks see them in every session.
 
 Run `setup.sh` from a shell where `python` and `pip` resolve to the interpreter Claude Code will see at hook time — typically your base user/system Python, not a venv. The SessionStart/Stop hooks call `python -m hydra_cli`, so the package must be installed against whatever `python` is first on `PATH` when Claude Code spawns. Installing inside a venv pins hydra to that venv and the hooks silently no-op everywhere else.
 

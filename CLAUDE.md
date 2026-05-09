@@ -58,12 +58,19 @@ server/
     slug.py            — Slug normalization + stoplist for auto-registered projects
 client/
   hydra_cli/
-    __main__.py       — CLI dispatch (memory, project, config, sync, capture-remote-url)
-    api.py            — Stdlib urllib + bearer token + User-Agent header
-    sync.py           — Bidirectional memory sync, frontmatter parse, MEMORY.md regen
-    remote.py         — Stop-hook entry: scans transcript for bridge_status, PUTs URL
-  settings.json       — Claude Code settings template (__HYDRA_URL__ placeholder)
-  setup.sh            — Copies settings.json with URL substitution + installs hydra CLI
+    __main__.py            — CLI dispatch (memory, project, config, sync,
+                              capture-remote-url, apply-settings)
+    api.py                 — Stdlib urllib + bearer token + User-Agent header
+    sync.py                — Bidirectional memory sync, frontmatter parse, MEMORY.md regen
+    remote.py              — Stop-hook entry: scans transcript for bridge_status, PUTs URL
+    apply_settings.py      — 3-way merge for ~/.claude/settings.json
+                              (hydra hooks → template defaults → user overrides)
+  settings.json            — Hydra hooks template (__HYDRA_URL__ / __HYDRA_REPO_PATH__ placeholders)
+  settings.user.template.json — User-pref defaults (effortLevel, attribution, statusLine, …);
+                                scaffolded to ~/.claude/settings.user.json on first run
+  statusline.sh            — Default status-line script; scaffolded to ~/.claude/ (only if absent)
+  setup.sh                 — pip-installs hydra_cli, then runs apply-settings to render
+                              ~/.claude/settings.json from the three layers
 static/
   index.html, app.js   — Sessions dashboard (/); archive, Recent Events chip filter
   memory.html, memory.js — Memory dashboard (/memory); browse, delete, copy, move,
@@ -97,6 +104,7 @@ schema.sql            — DDL; sessions.archived_at, memories has project_slug F
 - **Auto-register:** unregistered cwds POST to `/api/projects/auto-register` on SessionStart's pull. Server applies a stoplist (`server/services/slug.py` — `home`, `tmp`, `Downloads`, …) and either creates a new slug, attaches this machine's path to an existing slug, or skips with a reason. Auto-flagged entries (`projects.auto_registered_at`, `project_paths.auto_registered_at`) surface in the `/memory` dashboard's **Pending review** section with Confirm/Delete actions.
 - **Editor deep-links:** `editors.json` maps instance_id → editor URI scheme (vscode://, cursor://, wsl, ssh-remote, jetbrains).
 - **Remote Control URL capture:** Stop hook runs `python -m hydra_cli capture-remote-url`, which scans `transcript_path` for `{type:"system",subtype:"bridge_status",url:...}` and PUTs the latest URL to `/api/sessions/{id}/remote-control-url`. Empirically only `entrypoint=cli` Claude Code writes this event; `entrypoint=claude-vscode` is silent there, so VS Code users keep using the dashboard's manual-paste input on each session card. Filter on the JSON shape, not substring grep — user/assistant text quoting "bridge_status" can otherwise contaminate the scan.
+- **Settings render (3-way merge):** `~/.claude/settings.json` is composed by `python -m hydra_cli apply-settings` (called from `setup.sh`) from three layers, in priority order: (1) `client/settings.json` — Hydra hooks template, (2) `client/settings.user.template.json` — shipped defaults (effortLevel, statusLine, attribution, …), (3) `~/.claude/settings.user.json` — user overrides. Hooks per event concatenate (Hydra first, user appended); other top-level keys: later layers win. The user file is scaffolded as a copy of the template on first run so users see all available knobs. **Deleting** a key in the user file falls back to the template default — that's the sanctioned way to opt out of a default (e.g. `statusLine`) without losing it for everyone else. `client/statusline.sh` is scaffolded to `~/.claude/statusline.sh` (chmod +x) on first run, only if absent.
 
 ## Conventions
 

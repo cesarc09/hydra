@@ -1,9 +1,17 @@
-"""Compose ~/.claude/settings.json from the Hydra template + user prefs.
+"""Compose ~/.claude/settings.json from three sources, in priority order:
 
-For each event under `hooks`, Hydra's matcher-groups come first and the user's
-groups append. For all other top-level keys (effortLevel, attribution, etc.)
-the user's value wins. The user file is scaffolded from the shipped template
-on first run and never overwritten afterwards.
+  1. Hydra hooks template (shipped, always present)
+  2. User-template defaults (shipped: effortLevel, statusLine, ...)
+  3. User overrides (~/.claude/settings.user.json — scaffolded as a copy of
+     the template on first run so users can see what's customizable)
+
+For each event under `hooks`, Hydra's matcher-groups come first and any user
+groups append. For other top-level keys, later sources override earlier ones
+— so template defaults beat the Hydra base and user overrides beat both.
+
+Crucially: a key *deleted* from the user file falls back to the template
+default rather than disappearing — so users can drop fields they don't want
+to customize without losing the default behavior.
 """
 
 from __future__ import annotations
@@ -49,14 +57,19 @@ def cmd_apply_settings(args: argparse.Namespace) -> None:
     if not user_file.exists():
         user_file.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(user_template, user_file)
-        print(f"Scaffolded {user_file} from {user_template}", file=sys.stderr)
+        print(
+            f"Scaffolded {user_file} from {user_template} "
+            f"(edit values to override; delete a field to fall back to the default)",
+            file=sys.stderr,
+        )
 
     raw = hydra_template.read_text(encoding="utf-8")
     raw = substitute(raw, args.hydra_url, args.hydra_repo_path)
     hydra = json.loads(raw)
+    defaults = json.loads(user_template.read_text(encoding="utf-8"))
     user = json.loads(user_file.read_text(encoding="utf-8"))
 
-    merged = merge(hydra, user)
+    merged = merge(merge(hydra, defaults), user)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")

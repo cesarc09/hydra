@@ -9,5 +9,8 @@
   "showThinkingSummaries": true,
   "respectGitignore": true,
   "showTurnDuration": true,
-  "statusLine": {}
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/statusline.sh"
+  }
 }
