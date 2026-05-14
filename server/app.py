@@ -1,8 +1,9 @@
+import json
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from server import config
@@ -19,6 +20,79 @@ _BODY_LIMITS: dict[str, int] = {
 _DEFAULT_BODY_LIMIT = 256 * 1024
 
 
+class _BodyTooLarge(Exception):
+    """Raised once the streamed request body exceeds its per-path cap."""
+
+
+def _scope_header(scope, name: bytes) -> bytes | None:
+    for key, value in scope["headers"]:
+        if key == name:
+            return value
+    return None
+
+
+async def _send_json(send, status: int, detail: str) -> None:
+    body = json.dumps({"detail": detail}).encode()
+    await send({
+        "type": "http.response.start",
+        "status": status,
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode()),
+        ],
+    })
+    await send({"type": "http.response.body", "body": body})
+
+
+class BodySizeLimitMiddleware:
+    """Reject request bodies over a per-path cap.
+
+    Content-Length alone is bypassable: a chunked-encoded request carries no
+    Content-Length header. So the cap is enforced on the bytes as they stream
+    in through `receive`, with the Content-Length check kept only as an early
+    reject before the client uploads anything.
+    """
+
+    def __init__(self, app, limits: dict[str, int], default: int):
+        self.app = app
+        self.limits = limits
+        self.default = default
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        limit = self.limits.get(scope["path"], self.default)
+
+        content_length = _scope_header(scope, b"content-length")
+        if content_length is not None:
+            try:
+                declared = int(content_length)
+            except ValueError:
+                await _send_json(send, 400, "Invalid content-length")
+                return
+            if declared > limit:
+                await _send_json(send, 413, "Request body too large")
+                return
+
+        received = 0
+
+        async def limited_receive():
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    raise _BodyTooLarge()
+            return message
+
+        try:
+            await self.app(scope, limited_receive, send)
+        except _BodyTooLarge:
+            await _send_json(send, 413, "Request body too large")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if not config.AUTH_TOKEN and not config.ALLOW_NO_AUTH:
@@ -32,18 +106,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Hydra", lifespan=lifespan)
 
-
-@app.middleware("http")
-async def limit_request_body(request: Request, call_next):
-    limit = _BODY_LIMITS.get(request.url.path, _DEFAULT_BODY_LIMIT)
-    content_length = request.headers.get("content-length")
-    if content_length is not None:
-        try:
-            if int(content_length) > limit:
-                return JSONResponse({"detail": "Request body too large"}, status_code=413)
-        except ValueError:
-            return JSONResponse({"detail": "Invalid content-length"}, status_code=400)
-    return await call_next(request)
+app.add_middleware(
+    BodySizeLimitMiddleware, limits=_BODY_LIMITS, default=_DEFAULT_BODY_LIMIT
+)
 
 
 if config.PUBLIC_ORIGIN:
