@@ -68,7 +68,7 @@ class MemoryCreate(BaseModel):
 
 
 class MemoryUpdate(BaseModel):
-    """Partial update — only non-None fields are applied."""
+    """Partial update - only non-None fields are applied."""
     name: str | None = None
     description: str | None = None
     type: MemoryType | None = None
@@ -97,7 +97,7 @@ class ProjectCreate(BaseModel):
 
 
 class ProjectUpdate(BaseModel):
-    """Partial update — only non-None fields are applied."""
+    """Partial update - only non-None fields are applied."""
     description: str | None = None
 
 

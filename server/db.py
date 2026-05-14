@@ -24,7 +24,7 @@ async def _migrate(conn: aiosqlite.Connection) -> None:
     """Idempotent in-place migrations for existing DBs.
 
     schema.sql uses CREATE TABLE IF NOT EXISTS, so new columns on pre-existing
-    tables don't appear without an ALTER. Keep this short — each block should
+    tables don't appear without an ALTER. Keep this short - each block should
     check for its target state before acting.
     """
     cursor = await conn.execute("PRAGMA table_info(memories)")
@@ -50,7 +50,7 @@ async def _migrate(conn: aiosqlite.Connection) -> None:
     if "remote_control_url" not in session_cols:
         await conn.execute("ALTER TABLE sessions ADD COLUMN remote_control_url TEXT")
     # Partial index references archived_at, so it lives here (after the ALTER)
-    # rather than in schema.sql — schema.sql runs before this migration.
+    # rather than in schema.sql - schema.sql runs before this migration.
     await conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_sessions_active "
         "ON sessions(last_event_at) WHERE archived_at IS NULL"

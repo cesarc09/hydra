@@ -460,7 +460,7 @@ a.file-link:hover {
     background: #353d3e;
 }
 
-/* Archive bulk button — !important to override any Pico defaults we may
+/* Archive bulk button - !important to override any Pico defaults we may
    not have anticipated. Spans don't inherit Pico's button styling, but
    we use !important here defensively after several rounds of regressions. */
 .archive-bulk-btn {
@@ -483,7 +483,7 @@ a.file-link:hover {
     border-color: #887a64 !important;
 }
 
-/* Per-card archive × — must be visible even on .status-ended cards
+/* Per-card archive × - must be visible even on .status-ended cards
    which have opacity: 0.6. High-contrast background + bright color. */
 .archive-btn {
     display: inline-flex !important;
@@ -536,7 +536,7 @@ a.file-link:hover {
     flex: 0 0 auto;
     white-space: nowrap;
 }
-/* Inline children (tool-name, code) inside the clipped text — ensure
+/* Inline children (tool-name, code) inside the clipped text - ensure
    they participate in the ellipsis rather than stretching the container. */
 .session-card .last-activity .last-activity-text code,
 .session-card .last-activity .last-activity-text .tool-name {

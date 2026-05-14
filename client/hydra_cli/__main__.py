@@ -1,4 +1,4 @@
-"""Hydra CLI — thin client for the Hydra REST API."""
+"""Hydra CLI - thin client for the Hydra REST API."""
 
 from __future__ import annotations
 

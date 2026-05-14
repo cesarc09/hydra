@@ -26,7 +26,7 @@ async function apiFetch(path, opts = {}) {
     let res = await fetch(path, { ...opts, headers });
     if (res.status === 401) {
         // Only re-prompt if no concurrent request already replaced the token.
-        // Without this check, N parallel 401s cause N prompts — even after the
+        // Without this check, N parallel 401s cause N prompts - even after the
         // first prompt got the correct token.
         if (authToken === tokenUsed) {
             clearToken();

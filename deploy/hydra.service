@@ -1,5 +1,5 @@
 [Unit]
-Description=Hydra — Claude Code Control Plane
+Description=Hydra - Claude Code Control Plane
 After=network.target
 
 [Service]

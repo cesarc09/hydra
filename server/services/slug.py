@@ -74,7 +74,7 @@ def derive_slug_from_cwd(cwd: str) -> tuple[str | None, str | None]:
     if not stripped or stripped in {"/", "C:", "C:/", "C:\\"}:
         return None, "root-level cwd"
     # Windows drive root like "C:\Users" still has a basename, but a 2-char
-    # drive specifier alone shouldn't match — drop it after strip.
+    # drive specifier alone shouldn't match - drop it after strip.
     if re.fullmatch(r"[A-Za-z]:", stripped):
         return None, "root-level cwd"
 

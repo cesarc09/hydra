@@ -129,7 +129,7 @@ def _api_error(status: int, body: str) -> str:
 def resolve_project_slug(cwd: str, *, auto_attach: bool = True) -> str | None:
     """Look up the project slug for cwd in the Hydra projects registry.
 
-    Matches against any registered path for any machine — a project may live
+    Matches against any registered path for any machine - a project may live
     at different filesystem paths on different machines, and the cwd itself
     is unambiguous enough that instance_id scoping is unnecessary here.
 
@@ -239,7 +239,7 @@ def regenerate_index(memory_dir: Path, memories: list[dict[str, Any]]) -> None:
     for mem in sorted(memories, key=lambda m: m["name"]):
         filename = _slugify_filename(mem["name"])
         desc = mem.get("description", "").strip()
-        suffix = f" — {desc}" if desc else ""
+        suffix = f" - {desc}" if desc else ""
         lines.append(f"- [{mem['name']}]({filename}){suffix}")
     content = "\n".join(lines) + ("\n" if lines else "")
     (memory_dir / MEMORY_INDEX).write_text(content, encoding="utf-8")
@@ -309,7 +309,7 @@ def run_sync(
                 if diffs:
                     conflicts.append((mem["name"], diffs))
                     continue
-                # Identical — nothing to do
+                # Identical - nothing to do
                 continue
             # In --push mode OR local-only in bidirectional → upsert
             if dry_run:

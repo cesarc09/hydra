@@ -64,7 +64,7 @@ class FakeAPI:
 
     def post(self, path: str, payload: dict) -> tuple[int, str]:
         if path == "/api/projects":
-            # Idempotent project upsert — mirrors the server. If the slug
+            # Idempotent project upsert - mirrors the server. If the slug
             # exists, append/update the path row; otherwise create a new entry.
             slug = payload["slug"]
             new_path = payload["path"]

@@ -228,7 +228,7 @@ async def archive_session(session_id: str) -> None:
         raise SessionNotFound(session_id)
     status, archived_at = rows[0][0], rows[0][1]
     if archived_at is not None:
-        return  # already archived — idempotent
+        return  # already archived - idempotent
     if status not in _ARCHIVABLE_STATES:
         raise SessionStateConflict(status)
     now = _now()
@@ -253,7 +253,7 @@ async def unarchive_session(session_id: str) -> None:
     if not rows:
         raise SessionNotFound(session_id)
     if rows[0][0] is None:
-        return  # already visible — idempotent
+        return  # already visible - idempotent
     now = _now()
     await db.execute(
         "UPDATE sessions SET archived_at=NULL WHERE session_id=?",

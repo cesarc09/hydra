@@ -131,7 +131,7 @@ function handleEvent(data) {
             started_at: data.received_at,
         };
     } else {
-        // Unknown session — refetch all
+        // Unknown session - refetch all
         fetchSessions();
         return;
     }
@@ -172,7 +172,7 @@ function renderEventFilter() {
     const eligible = Object.values(sessions).filter(
         (s) => s.status === "active" || s.status === "waiting_input" || s.status === "idle"
     );
-    // Prune selection to the eligible set — auto-removes archived/ended sessions.
+    // Prune selection to the eligible set - auto-removes archived/ended sessions.
     const eligibleIds = new Set(eligible.map((s) => s.session_id));
     for (const sid of [...selectedSessionIds]) {
         if (!eligibleIds.has(sid)) selectedSessionIds.delete(sid);
@@ -216,7 +216,7 @@ function clearEventFilter() {
 }
 
 function renderCard(s) {
-    const shortCwd = s.cwd ? s.cwd.split("/").slice(-2).join("/") : "—";
+    const shortCwd = s.cwd ? s.cwd.split("/").slice(-2).join("/") : "-";
     const statusLabel = {
         active: "Working",
         waiting_input: "Waiting for Input",
@@ -232,7 +232,7 @@ function renderCard(s) {
 
     const lastActivity = s.last_tool
         ? `<span class="tool-name">${escHtml(s.last_tool)}</span>${s.last_tool_input_summary ? " <code>" + escHtml(truncate(s.last_tool_input_summary, 60)) + "</code>" : ""}`
-        : "—";
+        : "-";
 
     const ago = timeAgo(s.last_event_at);
     const files = Array.isArray(s.files_changed) ? s.files_changed : [];
@@ -277,7 +277,7 @@ function renderCard(s) {
 }
 
 function renderArchivedCard(s) {
-    const shortCwd = s.cwd ? s.cwd.split("/").slice(-2).join("/") : "—";
+    const shortCwd = s.cwd ? s.cwd.split("/").slice(-2).join("/") : "-";
     const when = s.archived_at ? timeAgo(s.archived_at) : "";
     return `
         <article class="session-card archived-card status-${s.status}">
@@ -319,7 +319,7 @@ async function setRemoteControlUrl(sessionId, url) {
             renderSessions();
         }
     } else if (res.status === 400) {
-        alert("Invalid URL — expected https://claude.ai/code/session_...");
+        alert("Invalid URL - expected https://claude.ai/code/session_...");
     } else if (res.status === 404) {
         console.warn("Session not found when setting Remote Control URL");
     } else {
@@ -430,12 +430,12 @@ function renderEventLog() {
     log.innerHTML = filtered.map((e) => {
         const time = new Date(e.received_at).toLocaleTimeString();
         const detail = e.tool_input_summary ? escHtml(truncate(e.tool_input_summary, 80)) : "";
-        const shortSession = e.session_id ? e.session_id.slice(0, 8) : "—";
+        const shortSession = e.session_id ? e.session_id.slice(0, 8) : "-";
         return `
             <div class="event-row">
                 <span class="event-time">${time}</span>
                 <span class="event-session">${shortSession}</span>
-                <span class="event-instance">${escHtml(e.instance_id || "—")}</span>
+                <span class="event-instance">${escHtml(e.instance_id || "-")}</span>
                 <span class="event-name">${escHtml(e.event_name)}</span>
                 <span class="event-detail">${e.tool_name ? escHtml(e.tool_name) + " " : ""}${detail}</span>
             </div>

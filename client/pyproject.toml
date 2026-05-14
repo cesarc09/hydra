@@ -1,9 +1,9 @@
 [project]
 name = "hydra-cli"
 version = "0.1.0"
-description = "CLI client for Hydra — Claude Code control plane"
+description = "CLI client for Hydra - Claude Code control plane"
 requires-python = ">=3.11"
-# No runtime dependencies — stdlib only (urllib, json, argparse)
+# No runtime dependencies - stdlib only (urllib, json, argparse)
 
 [project.scripts]
 hydra = "hydra_cli.__main__:main"

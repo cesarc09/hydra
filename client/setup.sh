@@ -19,7 +19,7 @@ HYDRA_URL="${HYDRA_URL:-http://localhost:8400}"
 # so the SessionStart hook can `cd` back here regardless of where you cloned.
 HYDRA_REPO_PATH="$(dirname "$SCRIPT_DIR")"
 
-# Install hydra CLI first — `apply-settings` does the merge below.
+# Install hydra CLI first - `apply-settings` does the merge below.
 if command -v pip >/dev/null 2>&1; then
     pip install -e "$SCRIPT_DIR" --quiet 2>/dev/null
     echo "  Installed: hydra CLI"
@@ -41,7 +41,7 @@ python -m hydra_cli apply-settings \
     --hydra-url "$HYDRA_URL" \
     --hydra-repo-path "$HYDRA_REPO_PATH"
 
-# Scaffold the default status-line script. Only on first run — user edits stay.
+# Scaffold the default status-line script. Only on first run - user edits stay.
 STATUSLINE_SRC="$SCRIPT_DIR/statusline.sh"
 STATUSLINE_DST="$CLAUDE_DIR/statusline.sh"
 if [ -f "$STATUSLINE_SRC" ] && [ ! -f "$STATUSLINE_DST" ]; then

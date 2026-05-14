@@ -2,15 +2,15 @@
 
   1. Hydra hooks template (shipped, always present)
   2. User-template defaults (shipped: effortLevel, statusLine, ...)
-  3. User overrides (~/.claude/settings.user.json — scaffolded as a copy of
+  3. User overrides (~/.claude/settings.user.json - scaffolded as a copy of
      the template on first run so users can see what's customizable)
 
 For each event under `hooks`, Hydra's matcher-groups come first and any user
 groups append. For other top-level keys, later sources override earlier ones
-— so template defaults beat the Hydra base and user overrides beat both.
+- so template defaults beat the Hydra base and user overrides beat both.
 
 Crucially: a key *deleted* from the user file falls back to the template
-default rather than disappearing — so users can drop fields they don't want
+default rather than disappearing - so users can drop fields they don't want
 to customize without losing the default behavior.
 """
 

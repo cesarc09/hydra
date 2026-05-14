@@ -1,5 +1,5 @@
 #!/bin/bash
-# Default Hydra status line — context-window progress bar + model name.
+# Default Hydra status line - context-window progress bar + model name.
 # Copied to ~/.claude/statusline.sh by setup.sh (only on first run; user
 # customizations there survive subsequent runs). Requires `jq`.
 

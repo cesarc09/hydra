@@ -179,7 +179,7 @@ async def test_session_start_unarchives_session(client: AsyncClient):
 
 
 async def test_stop_does_not_unarchive(client: AsyncClient):
-    """A Stop event on an archived session should keep it archived —
+    """A Stop event on an archived session should keep it archived -
     Stop alone is not a signal that the session is relevant again."""
     await _start_and_idle(client, "s1")
     await client.post("/api/sessions/s1/archive")

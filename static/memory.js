@@ -2,7 +2,7 @@ let projects = [];
 let memories = [];
 let expandedMemoryIds = new Set();
 let expandedProjectSlugs = new Set();
-let openAction = null;  // { memoryId, kind: "copy" | "move" } — at most one inline form open
+let openAction = null;  // { memoryId, kind: "copy" | "move" } - at most one inline form open
 
 // --- Fetch ---
 

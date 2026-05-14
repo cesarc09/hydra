@@ -6,11 +6,11 @@ Follow this once per machine where you'll run Claude Code as a Hydra client. Ski
 
 - Git, Python 3.11+, pip
 - Hydra server URL + auth token (ask the server admin if that's not you)
-- `~/.claude/` — will be created by Claude Code on first run
+- `~/.claude/` - will be created by Claude Code on first run
 
 ## 1. Clone the repo
 
-Pick any location — setup.sh auto-detects where it lives. `~/projects/hydra` is just a convention:
+Pick any location - setup.sh auto-detects where it lives. `~/projects/hydra` is just a convention:
 
 ```bash
 git clone https://github.com/cesarc09/hydra.git ~/projects/hydra    # or wherever you keep code
@@ -23,9 +23,9 @@ The SessionStart hook will `cd` back to this clone to `git pull` on every sessio
 
 Every Claude Code process on this machine needs:
 
-- `HYDRA_URL` — e.g. `http://localhost:8400` or the public server URL
-- `HYDRA_AUTH_TOKEN` — shared secret from the server
-- `HYDRA_INSTANCE_ID` — unique machine name, usually `$(hostname)`
+- `HYDRA_URL` - e.g. `http://localhost:8400` or the public server URL
+- `HYDRA_AUTH_TOKEN` - shared secret from the server
+- `HYDRA_INSTANCE_ID` - unique machine name, usually `$(hostname)`
 
 **Where** to put them depends on how you launch Claude Code. Pick the section(s) that apply.
 
@@ -55,7 +55,7 @@ EOF
 chmod 600 ~/.vscode-server/server-env-setup
 ```
 
-Then **fully disconnect and reconnect** VSCode Remote (not just restart the extension) — the file is only sourced at server startup.
+Then **fully disconnect and reconnect** VSCode Remote (not just restart the extension) - the file is only sourced at server startup.
 
 ### Windows (native, not WSL)
 
@@ -75,11 +75,11 @@ bash ~/projects/hydra/client/setup.sh
 
 This materializes `~/.claude/settings.json` with hooks pointing at `$HYDRA_URL` and installs the `hydra` CLI. If `pip install -e` errors with PEP 668, retry with `pip install --user -e ~/projects/hydra/client`.
 
-> **Run `setup.sh` against the Python interpreter Claude Code will see.** The SessionStart/Stop hooks invoke `python -m hydra_cli ...`, which resolves through whatever `python` is first on `PATH` when Claude Code spawns the hook — usually your *base* user/system Python, not a venv. `setup.sh` calls `pip install -e client/`, so run it from a shell where `pip` and `python` resolve to the same interpreter you want hydra installed into. If you run it from inside a venv, hydra ends up only in that venv and the hooks will silently no-op outside it. Re-run `setup.sh` after switching Python versions.
+> **Run `setup.sh` against the Python interpreter Claude Code will see.** The SessionStart/Stop hooks invoke `python -m hydra_cli ...`, which resolves through whatever `python` is first on `PATH` when Claude Code spawns the hook - usually your *base* user/system Python, not a venv. `setup.sh` calls `pip install -e client/`, so run it from a shell where `pip` and `python` resolve to the same interpreter you want hydra installed into. If you run it from inside a venv, hydra ends up only in that venv and the hooks will silently no-op outside it. Re-run `setup.sh` after switching Python versions.
 
 Verify: `python -m hydra_cli --help` (and optionally `hydra --help` if the console shim is on PATH).
 
-`setup.sh` also scaffolds `~/.claude/settings.user.json` from `client/settings.user.template.json` on first run — this is your personal copy of the user-pref defaults (`effortLevel`, `attribution`, `statusLine`, …). Edit any value to override, or **delete a field to fall back to the template default**. For example, drop the `statusLine` block to use Claude Code's built-in status line instead of `~/.claude/statusline.sh`. The file is never overwritten after the first scaffold; your edits survive every re-run. See [client/README.md](client/README.md) for the full layering model.
+`setup.sh` also scaffolds `~/.claude/settings.user.json` from `client/settings.user.template.json` on first run - this is your personal copy of the user-pref defaults (`effortLevel`, `attribution`, `statusLine`, …). Edit any value to override, or **delete a field to fall back to the template default**. For example, drop the `statusLine` block to use Claude Code's built-in status line instead of `~/.claude/statusline.sh`. The file is never overwritten after the first scaffold; your edits survive every re-run. See [client/README.md](client/README.md) for the full layering model.
 
 ## 4. Register your projects
 
@@ -89,7 +89,7 @@ For each project directory where you use Claude Code:
 python -m hydra_cli project create --slug <short-name> --path "$(pwd)"
 ```
 
-The slug identifies the project across machines — use the same slug everywhere. If a project with the same slug already exists (from another machine), `python -m hydra_cli sync` auto-attaches this machine's path by directory basename, so you only need to register brand-new projects manually.
+The slug identifies the project across machines - use the same slug everywhere. If a project with the same slug already exists (from another machine), `python -m hydra_cli sync` auto-attaches this machine's path by directory basename, so you only need to register brand-new projects manually.
 
 ## 5. Upload this machine's existing memories
 
@@ -142,4 +142,4 @@ If you'd rather have Claude Code walk through the steps interactively, paste the
 
 ## Resyncing projects later
 
-You normally don't need this — opening a Claude Code session in any unregistered directory now auto-registers it (subject to the server's stoplist). Paste [client/sync-projects-prompt.md](client/sync-projects-prompt.md) only when you want to backfill local memories on a machine that pre-dates auto-register, or to bulk-register directories without opening a session in each.
+You normally don't need this - opening a Claude Code session in any unregistered directory now auto-registers it (subject to the server's stoplist). Paste [client/sync-projects-prompt.md](client/sync-projects-prompt.md) only when you want to backfill local memories on a machine that pre-dates auto-register, or to bulk-register directories without opening a session in each.

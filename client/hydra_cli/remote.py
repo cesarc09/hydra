@@ -3,7 +3,7 @@
 Wired up as a Stop hook. Scans the transcript JSONL for the most recent
 `bridge_status` system event and PUTs its `url` field to Hydra. Empirically,
 this event is emitted only by `entrypoint=cli` sessions when the user runs
-`/remote-control` — `entrypoint=claude-vscode` never writes it, so this
+`/remote-control` - `entrypoint=claude-vscode` never writes it, so this
 becomes a silent no-op there and the manual-paste UI takes over.
 
 Failures are swallowed (printed to stderr, exit 0) so a transient network
@@ -37,14 +37,14 @@ def latest_bridge_url(transcript_path: str) -> str | None:
 
     Filters on the actual JSON shape (type=system, subtype=bridge_status) so
     user/assistant text quoting "bridge_status" doesn't get mistaken for an
-    event — the contamination we hit while researching this feature.
+    event - the contamination we hit while researching this feature.
     """
     latest: str | None = None
     try:
         with open(transcript_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-                # Cheap pre-filter — most lines won't match.
+                # Cheap pre-filter - most lines won't match.
                 if not line or '"bridge_status"' not in line:
                     continue
                 try:

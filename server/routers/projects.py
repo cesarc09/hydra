@@ -74,7 +74,7 @@ async def create_project(
     x_instance_id: str = Header(default="unknown"),
 ) -> ProjectItem:
     """Idempotent on slug. If the slug is new, creates it. If the slug exists,
-    upserts the (slug, instance_id) path — same machine re-registers update the
+    upserts the (slug, instance_id) path - same machine re-registers update the
     row; a new machine adds a new row. Description is only written on create."""
     db = await get_db()
     now = _now()
@@ -202,7 +202,7 @@ async def auto_register(
         # only set on insert (this branch only runs when there's no row for
         # this (slug, instance_id), since the early-return above covered the
         # case where path matches exactly. A row could still exist with a
-        # different path on this instance — treat that as "this machine moved
+        # different path on this instance - treat that as "this machine moved
         # the project", and don't reset the auto flag if it was already cleared
         # by Confirm.)
         await db.execute(

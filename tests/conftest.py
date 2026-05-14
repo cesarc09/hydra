@@ -20,7 +20,7 @@ async def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     await conn.executescript(SCHEMA_PATH.read_text())
     await conn.commit()
 
-    # Inject test DB — get_db() reads _db from the module, so all importers see it
+    # Inject test DB - get_db() reads _db from the module, so all importers see it
     monkeypatch.setattr(db_module, "_db", conn)
     # Disable auth for all tests by default. require_auth fails closed when
     # AUTH_TOKEN is empty unless ALLOW_NO_AUTH is set.

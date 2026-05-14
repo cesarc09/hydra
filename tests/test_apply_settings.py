@@ -1,4 +1,4 @@
-"""Tests for `hydra apply-settings` — merge Hydra template + user prefs."""
+"""Tests for `hydra apply-settings` - merge Hydra template + user prefs."""
 
 from __future__ import annotations
 

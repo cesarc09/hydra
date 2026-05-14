@@ -1,6 +1,6 @@
 # claude-config
 
-Shared Claude Code configuration — personal rules and hook settings synced across machines via git.
+Shared Claude Code configuration - personal rules and hook settings synced across machines via git.
 
 ## What's in here
 
@@ -15,10 +15,10 @@ Shared Claude Code configuration — personal rules and hook settings synced acr
 
 Claude Code reads settings from two layers:
 
-1. **Project-level** — `CLAUDE.md` and `.claude/settings.json` inside each git repo (shared via git with collaborators)
-2. **User-level** — `~/.claude/CLAUDE.md` and `~/.claude/settings.json` (personal, per-machine)
+1. **Project-level** - `CLAUDE.md` and `.claude/settings.json` inside each git repo (shared via git with collaborators)
+2. **User-level** - `~/.claude/CLAUDE.md` and `~/.claude/settings.json` (personal, per-machine)
 
-This repo manages **layer 2** — your personal preferences and hook configuration. It is deployed to `~/.claude/` on each machine via `setup.sh`.
+This repo manages **layer 2** - your personal preferences and hook configuration. It is deployed to `~/.claude/` on each machine via `setup.sh`.
 
 ## Setup (new machine)
 
@@ -39,9 +39,9 @@ bash client/setup.sh
 `setup.sh` runs `python -m hydra_cli apply-settings`, which merges three
 layers in priority order:
 
-1. **Hydra hooks template** — `client/settings.json` (HTTP hooks + sync commands).
-2. **User-pref defaults** — `client/settings.user.template.json` (`effortLevel`, `attribution`, `statusLine`, …).
-3. **Your overrides** — `~/.claude/settings.user.json`. Scaffolded as a *copy* of the template on first run so you see every available knob.
+1. **Hydra hooks template** - `client/settings.json` (HTTP hooks + sync commands).
+2. **User-pref defaults** - `client/settings.user.template.json` (`effortLevel`, `attribution`, `statusLine`, …).
+3. **Your overrides** - `~/.claude/settings.user.json`. Scaffolded as a *copy* of the template on first run so you see every available knob.
 
 For each event under `hooks`, Hydra's matcher-groups come first and any user
 matcher-groups append. For other top-level keys, later layers override earlier
@@ -51,10 +51,10 @@ ones (so your overrides beat both templates).
 
 Edit `~/.claude/settings.user.json`:
 
-- **Change a value** — your value wins on the next render.
-- **Delete a field** — falls back to the template default. This is how to opt out of a default you don't want without removing it from the shipped template (which would affect everyone else). For example, drop the `statusLine` block to use Claude Code's built-in status line instead of `~/.claude/statusline.sh`.
+- **Change a value** - your value wins on the next render.
+- **Delete a field** - falls back to the template default. This is how to opt out of a default you don't want without removing it from the shipped template (which would affect everyone else). For example, drop the `statusLine` block to use Claude Code's built-in status line instead of `~/.claude/statusline.sh`.
 
-`~/.claude/settings.user.json` is never overwritten after the initial scaffold —
+`~/.claude/settings.user.json` is never overwritten after the initial scaffold -
 your edits survive every `setup.sh` re-run.
 
 ## Updating shared rules / hooks
