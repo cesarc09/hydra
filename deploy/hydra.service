@@ -1,13 +1,18 @@
+# Example systemd unit. Replace __USER__ and __HYDRA_DIR__ with the account
+# and absolute path Hydra is installed under, then copy to
+# /etc/systemd/system/hydra.service and `systemctl enable --now hydra`.
+
 [Unit]
 Description=Hydra - Claude Code Control Plane
 After=network.target
 
 [Service]
 Type=simple
-User=giosu
-WorkingDirectory=/home/giosu/hydra
-EnvironmentFile=/home/giosu/hydra/.env
-ExecStart=/home/giosu/hydra/venv/bin/uvicorn server.app:app --host 0.0.0.0 --port 8400
+User=__USER__
+WorkingDirectory=__HYDRA_DIR__
+EnvironmentFile=__HYDRA_DIR__/.env
+# Binds loopback-only; put a reverse proxy in front for external access.
+ExecStart=__HYDRA_DIR__/venv/bin/uvicorn server.app:app --host 127.0.0.1 --port 8400
 Restart=always
 RestartSec=5
 
