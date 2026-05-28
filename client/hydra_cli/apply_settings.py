@@ -12,6 +12,11 @@ groups append. For other top-level keys, later sources override earlier ones
 Crucially: a key *deleted* from the user file falls back to the template
 default rather than disappearing - so users can drop fields they don't want
 to customize without losing the default behavior.
+
+After merging, `effortLevel` is translated into `env.CLAUDE_CODE_EFFORT_LEVEL`
+because Claude Code only honors the env var for some values (notably `max`).
+Users still edit `effortLevel` in the user-facing template; the rewrite is
+invisible to them.
 """
 
 from __future__ import annotations
@@ -48,6 +53,23 @@ def merge(hydra: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def promote_effort_level_to_env(settings: dict[str, Any]) -> dict[str, Any]:
+    """Move `effortLevel` into `env.CLAUDE_CODE_EFFORT_LEVEL`.
+
+    Claude Code only honors the env var for some values (e.g. `max`), so we
+    rewrite the merged settings to always set it via `env`. Existing `env`
+    entries are preserved; an explicit `env.CLAUDE_CODE_EFFORT_LEVEL` wins
+    over the top-level `effortLevel`.
+    """
+    if "effortLevel" not in settings:
+        return settings
+    effort = settings.pop("effortLevel")
+    env = dict(settings.get("env") or {})
+    env.setdefault("CLAUDE_CODE_EFFORT_LEVEL", effort)
+    settings["env"] = env
+    return settings
+
+
 def cmd_apply_settings(args: argparse.Namespace) -> None:
     hydra_template = Path(args.hydra_template)
     user_template = Path(args.user_template)
@@ -70,6 +92,7 @@ def cmd_apply_settings(args: argparse.Namespace) -> None:
     user = json.loads(user_file.read_text(encoding="utf-8"))
 
     merged = merge(merge(hydra, defaults), user)
+    merged = promote_effort_level_to_env(merged)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
