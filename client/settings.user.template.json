@@ -10,6 +10,7 @@
   "respectGitignore": true,
   "showTurnDuration": true,
   "defaultMode": "auto",
+  "cleanupPeriodDays": 999,
   "statusLine": {
     "type": "command",
     "command": "~/.claude/statusline.sh"
