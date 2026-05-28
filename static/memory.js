@@ -2,7 +2,7 @@ let projects = [];
 let memories = [];
 let expandedMemoryIds = new Set();
 let expandedProjectSlugs = new Set();
-let openAction = null;  // { memoryId, kind: "copy" | "move" } - at most one inline form open
+let openAction = null;  // { memoryId, kind: "copy" | "move" | "distribute" } - at most one inline form open
 
 // --- Fetch ---
 
@@ -204,6 +204,8 @@ function renderMemoryRow(m, isGlobal) {
     if (!isGlobal) {
         actions.push(`<span class="memory-action" onclick="startCopy(${m.id})">Copy</span>`);
         actions.push(`<span class="memory-action" onclick="startMoveToGlobal(${m.id})">Move to Global</span>`);
+    } else {
+        actions.push(`<span class="memory-action" onclick="startDistribute(${m.id})">Move to projects</span>`);
     }
     actions.push(`<span class="memory-action memory-action-danger" onclick="deleteMemory(${m.id})">Delete</span>`);
     const form = renderInlineForm(m);
@@ -266,6 +268,25 @@ function renderInlineForm(m) {
             </div>
         `;
     }
+    if (openAction.kind === "distribute") {
+        if (projects.length === 0) {
+            return `<div class="memory-inline-form">No projects to move to. <span class="memory-action" onclick="cancelAction()">Cancel</span></div>`;
+        }
+        const sorted = [...projects].sort((a, b) => a.slug.localeCompare(b.slug));
+        const boxes = sorted.map((p) => `
+            <label><input type="checkbox" name="distribute-${m.id}" value="${escAttr(p.slug)}"> ${escHtml(p.slug)}</label>
+        `).join("");
+        return `
+            <div class="memory-inline-form memory-inline-form-distribute">
+                <div class="distribute-label">Move to projects:</div>
+                <div class="distribute-checkboxes">${boxes}</div>
+                <div class="distribute-actions">
+                    <span class="memory-action" onclick="confirmDistribute(${m.id})">Confirm</span>
+                    <span class="memory-action" onclick="cancelAction()">Cancel</span>
+                </div>
+            </div>
+        `;
+    }
     return "";
 }
 
@@ -292,6 +313,11 @@ function startCopy(id) {
 
 function startMoveToGlobal(id) {
     openAction = { memoryId: id, kind: "move" };
+    render();
+}
+
+function startDistribute(id) {
+    openAction = { memoryId: id, kind: "distribute" };
     render();
 }
 
@@ -386,6 +412,65 @@ async function confirmMove(id) {
     memories = memories.filter((x) => x.id !== id);
     const idx = memories.findIndex((x) => x.id === saved.id);
     if (idx >= 0) memories[idx] = saved; else memories.push(saved);
+    openAction = null;
+    expandedMemoryIds.delete(id);
+    render();
+}
+
+async function confirmDistribute(id) {
+    const m = memories.find((x) => x.id === id);
+    if (!m) return;
+    const checked = document.querySelectorAll(`input[name="distribute-${id}"]:checked`);
+    const targets = [...checked].map((el) => el.value);
+    if (targets.length === 0) {
+        alert("Pick at least one project.");
+        return;
+    }
+    const collisions = targets.filter(
+        (t) => memories.some((x) => x.name === m.name && x.project_slug === t),
+    );
+    if (collisions.length > 0) {
+        const plural = collisions.length > 1 ? "s" : "";
+        const list = collisions.map((s) => `'${s}'`).join(", ");
+        if (!confirm(`Overwrite existing memory '${m.name}' in project${plural} ${list}?`)) return;
+    }
+    const payloadBase = {
+        name: m.name,
+        description: m.description || "",
+        type: m.type,
+        body: m.body || "",
+    };
+    const results = await Promise.all(targets.map(async (t) => {
+        const res = await apiFetch(`${API}/memory`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...payloadBase, project_slug: t }),
+        });
+        return {
+            target: t,
+            ok: res.ok,
+            status: res.status,
+            saved: res.ok ? await res.json() : null,
+        };
+    }));
+    const failed = results.filter((r) => !r.ok);
+    if (failed.length > 0) {
+        const msg = failed.map((f) => `${f.target} (HTTP ${f.status})`).join(", ");
+        alert(`Move to projects partially failed: ${msg}. Global memory NOT deleted. Successful copies are saved; you may retry.`);
+        await refresh();
+        return;
+    }
+    const delRes = await apiFetch(`${API}/memory/${id}`, { method: "DELETE" });
+    if (delRes.status !== 204) {
+        alert(`Move to projects partially failed: copies created, but DELETE of original returned HTTP ${delRes.status}. Resolve manually.`);
+        await refresh();
+        return;
+    }
+    memories = memories.filter((x) => x.id !== id);
+    for (const r of results) {
+        const idx = memories.findIndex((x) => x.id === r.saved.id);
+        if (idx >= 0) memories[idx] = r.saved; else memories.push(r.saved);
+    }
     openAction = null;
     expandedMemoryIds.delete(id);
     render();

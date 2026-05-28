@@ -124,6 +124,53 @@ async def test_upsert_distinct_when_project_differs(client: AsyncClient):
     assert b["project_slug"] == "beta"
 
 
+async def test_distribute_global_to_multiple_projects(client: AsyncClient):
+    """Simulates the dashboard's Move-to-projects flow: POST same name into N
+    project slugs, then DELETE the global. The N project copies should remain
+    intact with distinct ids."""
+    await _register_project(client, "alpha", "/tmp/alpha")
+    await _register_project(client, "beta", "/tmp/beta")
+    await _register_project(client, "gamma", "/tmp/gamma")
+
+    g = await _create_memory(client, name="shared", body="GLOBAL", type="user")
+    assert g["project_slug"] is None
+    global_id = g["id"]
+
+    saved = []
+    for slug in ("alpha", "beta", "gamma"):
+        row = await _create_memory(
+            client, name="shared", body="GLOBAL", type="user", project_slug=slug,
+        )
+        saved.append(row)
+
+    ids = {s["id"] for s in saved}
+    assert len(ids) == 3
+    assert global_id not in ids
+
+    res = await client.delete(f"/api/memory/{global_id}")
+    assert res.status_code == 204
+
+    res = await client.get("/api/memory")
+    rows = res.json()
+    assert len(rows) == 3
+    assert {row["project_slug"] for row in rows} == {"alpha", "beta", "gamma"}
+    assert all(row["name"] == "shared" for row in rows)
+    assert all(row["body"] == "GLOBAL" for row in rows)
+
+    res = await client.get(f"/api/memory/{global_id}")
+    assert res.status_code == 404
+
+
+async def test_distribute_overwrites_existing_project_memory(client: AsyncClient):
+    """The dashboard relies on upsert semantics when a collision is confirmed:
+    POSTing the same (name, project_slug) replaces the row in place."""
+    await _register_project(client, "alpha", "/tmp/alpha")
+    pre = await _create_memory(client, name="shared", project_slug="alpha", body="OLD")
+    over = await _create_memory(client, name="shared", project_slug="alpha", body="NEW")
+    assert pre["id"] == over["id"]
+    assert over["body"] == "NEW"
+
+
 # --- Filtered list ---
 
 
