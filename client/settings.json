@@ -6,13 +6,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -m hydra_cli sync --pull --cwd \"$PWD\" >/dev/null 2>&1 || true",
-            "timeout": 5
+            "command": "cd __HYDRA_REPO_PATH__ && git pull --ff-only 2>/dev/null && bash client/setup.sh 2>/dev/null || true",
+            "timeout": 10
           },
           {
             "type": "command",
-            "command": "cd __HYDRA_REPO_PATH__ && git pull --ff-only 2>/dev/null && bash client/setup.sh 2>/dev/null || true",
-            "timeout": 10
+            "command": "python -m hydra_cli sync --pull --cwd \"$PWD\" >/dev/null 2>&1 || true",
+            "timeout": 5
           },
           {
             "type": "command",
