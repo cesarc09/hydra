@@ -50,6 +50,16 @@ if [ -f "$STATUSLINE_SRC" ] && [ ! -f "$STATUSLINE_DST" ]; then
     echo "  Scaffolded: $STATUSLINE_DST  (edit to customize; survives re-runs)"
 fi
 
+# Deploy Hydra-shipped slash commands. Overwrite on each run so repo edits
+# propagate across machines (unlike statusline.sh, these are hydra-owned).
+COMMANDS_SRC="$SCRIPT_DIR/commands"
+COMMANDS_DST="$CLAUDE_DIR/commands"
+if [ -d "$COMMANDS_SRC" ]; then
+    mkdir -p "$COMMANDS_DST"
+    cp "$COMMANDS_SRC"/*.md "$COMMANDS_DST"/ 2>/dev/null || true
+    echo "  Installed: slash commands -> $COMMANDS_DST"
+fi
+
 echo "  Installed: settings.json -> $TARGET  (HYDRA_URL=${HYDRA_URL}, repo=${HYDRA_REPO_PATH})"
 echo "  User prefs:                 $USER_FILE  (edit to customize; survives re-runs)"
 echo ""

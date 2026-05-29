@@ -69,8 +69,11 @@ client/
   settings.user.template.json - User-pref defaults (effortLevel, attribution, statusLine, …);
                                 scaffolded to ~/.claude/settings.user.json on first run
   statusline.sh            - Default status-line script; scaffolded to ~/.claude/ (only if absent)
-  setup.sh                 - pip-installs hydra_cli, then runs apply-settings to render
-                              ~/.claude/settings.json from the three layers
+  commands/sync.md         - /sync slash command (session wrap-up: propose doc + memory
+                              updates, then write a per-session summary); scaffolded to
+                              ~/.claude/commands/ (overwritten each run so repo edits propagate)
+  setup.sh                 - pip-installs hydra_cli, runs apply-settings to render
+                              ~/.claude/settings.json, then scaffolds statusline.sh + commands/
 static/
   index.html, app.js   - Sessions dashboard (/); archive, Recent Events chip filter
   memory.html, memory.js - Memory dashboard (/memory); browse, delete, copy, move,
