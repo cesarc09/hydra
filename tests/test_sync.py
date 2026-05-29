@@ -410,3 +410,74 @@ def test_bidirectional_pushes_local_only_and_pulls_server_only(
     local_files = {p.name for p in memory_dir.iterdir() if p.suffix == ".md"}
     assert "onlyserver.md" in local_files
     assert "onlylocal.md" in local_files
+
+
+# --- Prune-on-pull --------------------------------------------------------
+
+
+def test_pull_prunes_server_deleted_memory(fake_api: FakeAPI, memory_dir: Path):
+    """--pull on a synced project deletes local memory files the server no
+    longer has, and drops them from MEMORY.md."""
+    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
+    fake_api.memories = [{
+        "id": 1, "name": "keep", "description": "d", "type": "user",
+        "body": "kept", "project_slug": None,
+        "created_at": "t", "updated_at": "t",
+    }]
+    memory_dir.mkdir(parents=True)
+    (memory_dir / "orphan.md").write_text(
+        "---\nname: orphan\ndescription: d\ntype: user\n---\ngone from server\n",
+        encoding="utf-8",
+    )
+
+    code = sync_mod.run_sync("/test/proj", do_pull=True, do_push=False)
+    assert code == 0
+    names = {p.name for p in memory_dir.iterdir() if p.suffix == ".md"}
+    assert "orphan.md" not in names
+    assert "keep.md" in names
+    assert "orphan" not in (memory_dir / "MEMORY.md").read_text()
+
+
+def test_pull_does_not_prune_unsynced_cwd(fake_api: FakeAPI, memory_dir: Path):
+    """A stoplisted/unregistered cwd resolves to no slug, so --pull must not
+    prune its local files (no authoritative server view)."""
+    memory_dir.mkdir(parents=True)
+    (memory_dir / "orphan.md").write_text(
+        "---\nname: orphan\ndescription: d\ntype: user\n---\nlocal only\n",
+        encoding="utf-8",
+    )
+    code = sync_mod.run_sync("/home/me/Downloads", do_pull=True, do_push=False)
+    assert code == 0
+    names = {p.name for p in memory_dir.iterdir() if p.suffix == ".md"}
+    assert "orphan.md" in names
+
+
+def test_pull_dry_run_does_not_prune(fake_api: FakeAPI, memory_dir: Path):
+    """Dry-run --pull reports prunes but deletes nothing."""
+    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
+    memory_dir.mkdir(parents=True)
+    (memory_dir / "orphan.md").write_text(
+        "---\nname: orphan\ndescription: d\ntype: user\n---\ngone\n",
+        encoding="utf-8",
+    )
+    code = sync_mod.run_sync(
+        "/test/proj", do_pull=True, do_push=False, dry_run=True
+    )
+    assert code == 0
+    assert (memory_dir / "orphan.md").exists()
+
+
+def test_bidirectional_does_not_prune_local_only(fake_api: FakeAPI, memory_dir: Path):
+    """Bidirectional sync uploads a local-only memory rather than pruning it."""
+    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
+    memory_dir.mkdir(parents=True)
+    (memory_dir / "onlylocal.md").write_text(
+        "---\nname: onlylocal\ndescription: d\ntype: user\n---\nkeep me\n",
+        encoding="utf-8",
+    )
+    code = sync_mod.run_sync("/test/proj")  # bidirectional
+    assert code == 0
+    assert (memory_dir / "onlylocal.md").exists()
+    assert ("onlylocal", None) in {
+        (m["name"], m.get("project_slug")) for m in fake_api.memories
+    }

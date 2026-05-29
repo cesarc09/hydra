@@ -10,8 +10,9 @@ Semantics:
   diverging pairs as conflicts and skip them.
 - `hydra sync --push`: upload all local, overwriting server state. No
   conflict check (local wins by definition).
-- `hydra sync --pull`: download all server, overwriting local files. No
-  conflict check (server wins by definition).
+- `hydra sync --pull`: download all server, overwriting local files, and
+  prune local files the server no longer has (server wins by definition).
+  Skipped for unregistered cwds, which have no authoritative server view.
 """
 
 from __future__ import annotations
@@ -291,7 +292,7 @@ def run_sync(
     }
 
     conflicts: list[tuple[str, list[str]]] = []
-    pushed = pulled = skipped_pinned = 0
+    pushed = pulled = pruned = skipped_pinned = 0
 
     # --- Push side ---
     if do_push:
@@ -334,6 +335,22 @@ def run_sync(
                 print(f"  pulled: {remote['name']}")
             pulled += 1
 
+        # Prune local files the server no longer has (server wins). Only in
+        # pull-only mode: bidirectional treats local-only files as uploads,
+        # not deletions. Only for synced projects: an unregistered cwd has no
+        # authoritative server view, so its local files must not be deleted.
+        if not do_push and current_slug is not None:
+            server_names = {m["name"] for m in server}
+            for path, mem in walk_local_memories(memory_dir):
+                if mem["name"] in server_names:
+                    continue
+                if dry_run:
+                    print(f"  would prune (server-deleted): {path.name}")
+                else:
+                    path.unlink()
+                    print(f"  pruned (server-deleted): {path.name}")
+                pruned += 1
+
         if not dry_run:
             regenerate_index(
                 memory_dir, [m for _, m in walk_local_memories(memory_dir)]
@@ -341,7 +358,7 @@ def run_sync(
 
     # --- Summary ---
     print(
-        f"\nSummary: {pushed} pushed, {pulled} pulled, "
+        f"\nSummary: {pushed} pushed, {pulled} pulled, {pruned} pruned, "
         f"{len(conflicts)} conflicts, {skipped_pinned} skipped (no project)"
     )
     for name, diffs in conflicts:
