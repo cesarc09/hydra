@@ -19,10 +19,23 @@ HYDRA_URL="${HYDRA_URL:-http://localhost:8400}"
 # so the SessionStart hook can `cd` back here regardless of where you cloned.
 HYDRA_REPO_PATH="$(dirname "$SCRIPT_DIR")"
 
-# Install hydra CLI first - `apply-settings` does the merge below.
-if command -v pip >/dev/null 2>&1; then
-    pip install -e "$SCRIPT_DIR" --quiet 2>/dev/null
+# Install/refresh the hydra CLI into the SAME interpreter the hooks use:
+# `python -m pip`, not bare `pip` (which may belong to a different Python, or be
+# absent while `pip3` exists). Keep it in an `if` so a pip failure can't make
+# `set -e` abort the whole script silently, and let pip's error surface.
+if python -m pip install -e "$SCRIPT_DIR" --quiet; then
     echo "  Installed: hydra CLI"
+else
+    echo "  WARNING: 'python -m pip install -e $SCRIPT_DIR' failed - see output above." >&2
+fi
+
+# Gate on the CLI being importable by `python` before apply-settings needs it,
+# so a missing install fails loudly and actionably instead of cryptically.
+if ! python -c "import hydra_cli" >/dev/null 2>&1; then
+    echo "ERROR: hydra_cli is not importable by '$(command -v python || echo python)'." >&2
+    echo "  Install it for that interpreter:  python -m pip install -e $SCRIPT_DIR" >&2
+    echo "  On externally-managed Python (PEP 668): add --break-system-packages, or use a venv." >&2
+    exit 1
 fi
 
 TARGET="$CLAUDE_DIR/settings.json"
