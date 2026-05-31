@@ -1,5 +1,9 @@
 let projects = [];
 let memories = [];
+let claudeMd = "";  // current server content
+let claudeMdExpanded = false;
+let claudeMdDraft = null;  // null when not editing; string when textarea has been touched
+let claudeMdStatus = "";  // inline saved/error message
 let expandedMemoryIds = new Set();
 let expandedProjectSlugs = new Set();
 let openAction = null;  // { memoryId, kind: "copy" | "move" | "distribute" } - at most one inline form open
@@ -18,8 +22,14 @@ async function fetchMemories() {
     memories = await res.json();
 }
 
+async function fetchClaudeMd() {
+    const res = await apiFetch(`${API}/config/claude-md`);
+    if (!res.ok) return;
+    claudeMd = await res.text();
+}
+
 async function refresh() {
-    await Promise.all([fetchProjects(), fetchMemories()]);
+    await Promise.all([fetchProjects(), fetchMemories(), fetchClaudeMd()]);
     render();
 }
 
@@ -28,6 +38,7 @@ async function refresh() {
 function render() {
     renderStats();
     renderPendingReview();
+    renderClaudeMd();
     renderGlobals();
     renderProjects();
 }
@@ -140,6 +151,41 @@ async function deletePendingEntry(slug, instanceId, projectFlagged) {
         }
     }
     await refresh();
+}
+
+function renderClaudeMd() {
+    const el = document.getElementById("claude-md-section");
+    const caret = claudeMdExpanded ? "▾" : "▸";
+    const bytes = claudeMd.length;
+    const status = claudeMdStatus
+        ? `<span class="claude-md-status">${escHtml(claudeMdStatus)}</span>`
+        : "";
+    const header = `
+        <div class="claude-md-header" onclick="toggleClaudeMd()">
+            <span class="archive-caret">${caret}</span>
+            <span class="claude-md-label">CLAUDE.md</span>
+            <span class="claude-md-meta">${bytes} char${bytes !== 1 ? "s" : ""}</span>
+            ${status}
+        </div>
+    `;
+    if (!claudeMdExpanded) {
+        el.innerHTML = header;
+        return;
+    }
+    const current = claudeMdDraft != null ? claudeMdDraft : claudeMd;
+    const dirty = claudeMdDraft != null && claudeMdDraft !== claudeMd;
+    const saveClass = dirty ? "memory-action" : "memory-action memory-action-disabled";
+    const revertClass = dirty ? "memory-action" : "memory-action memory-action-disabled";
+    el.innerHTML = `
+        ${header}
+        <div class="claude-md-body">
+            <textarea id="claude-md-textarea" class="claude-md-textarea" oninput="onClaudeMdInput(this.value)" spellcheck="false">${escHtml(current)}</textarea>
+            <div class="claude-md-actions">
+                <span class="${saveClass}" onclick="saveClaudeMd()">Save</span>
+                <span class="${revertClass}" onclick="revertClaudeMd()">Revert</span>
+            </div>
+        </div>
+    `;
 }
 
 function renderStats() {
@@ -288,6 +334,65 @@ function renderInlineForm(m) {
         `;
     }
     return "";
+}
+
+// --- CLAUDE.md actions ---
+
+function toggleClaudeMd() {
+    claudeMdExpanded = !claudeMdExpanded;
+    if (!claudeMdExpanded) {
+        claudeMdDraft = null;
+        claudeMdStatus = "";
+    }
+    render();
+}
+
+function onClaudeMdInput(value) {
+    claudeMdDraft = value;
+    claudeMdStatus = "";
+    // Re-render only the action buttons' dirty state without rebuilding the
+    // textarea (which would lose caret position). The simplest path: toggle
+    // a CSS class on the buttons via direct DOM rather than full render().
+    const actions = document.querySelectorAll(".claude-md-actions .memory-action");
+    const dirty = claudeMdDraft !== claudeMd;
+    for (const a of actions) {
+        a.classList.toggle("memory-action-disabled", !dirty);
+    }
+}
+
+async function saveClaudeMd() {
+    if (claudeMdDraft == null || claudeMdDraft === claudeMd) return;
+    if (!claudeMdDraft.trim()) {
+        alert("CLAUDE.md cannot be empty.");
+        return;
+    }
+    const res = await apiFetch(`${API}/config/claude-md`, {
+        method: "PUT",
+        headers: { "Content-Type": "text/plain" },
+        body: claudeMdDraft,
+    });
+    if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try {
+            const data = await res.json();
+            if (data.detail) detail = data.detail;
+        } catch (_) { /* ignore */ }
+        claudeMdStatus = `Save failed: ${detail}`;
+        render();
+        return;
+    }
+    const data = await res.json();
+    claudeMd = claudeMdDraft;
+    claudeMdDraft = null;
+    claudeMdStatus = `Saved ${data.updated_at}`;
+    render();
+}
+
+function revertClaudeMd() {
+    if (claudeMdDraft == null || claudeMdDraft === claudeMd) return;
+    claudeMdDraft = null;
+    claudeMdStatus = "";
+    render();
 }
 
 // --- Toggles ---

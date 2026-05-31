@@ -447,6 +447,65 @@ a.file-link:hover {
     gap: 0.75rem;
 }
 
+/* CLAUDE.md section */
+.claude-md-section {
+    border: 1px solid #4a4540;
+    border-radius: 6px;
+    background: #353d3e;
+    overflow: hidden;
+}
+.claude-md-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 0.9rem;
+    cursor: pointer;
+}
+.claude-md-header:hover {
+    background: #3a4243;
+}
+.claude-md-label {
+    font-weight: 600;
+    color: #D9CAB3;
+}
+.claude-md-meta {
+    color: #887a64;
+    font-size: 0.85em;
+}
+.claude-md-status {
+    color: #a89a84;
+    font-size: 0.85em;
+    margin-left: auto;
+}
+.claude-md-body {
+    padding: 0.5rem 0.9rem 0.9rem;
+    border-top: 1px solid #4a4540;
+    background: #2C3233;
+}
+.claude-md-textarea {
+    width: 100%;
+    min-height: 20rem;
+    background: #242b2c;
+    color: #D9CAB3;
+    border: 1px solid #4a4540;
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 0.9em;
+    padding: 0.5rem;
+    resize: vertical;
+    box-sizing: border-box;
+}
+.claude-md-actions {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+}
+.memory-action-disabled {
+    color: #4a4540 !important;
+    cursor: default;
+    pointer-events: none;
+}
+
 /* Project rows */
 .project-row {
     border: 1px solid #4a4540;

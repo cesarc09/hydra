@@ -44,6 +44,35 @@ async def test_put_claude_md_replaces(client: AsyncClient):
     assert res.text == "version 2"
 
 
+async def test_put_empty_claude_md_rejected(client: AsyncClient):
+    """Blanking the user-level CLAUDE.md is destructive across every machine
+    that pulls from this Hydra instance; the PUT endpoint refuses empty or
+    whitespace-only content."""
+    for body in ("", "   ", "\n\n\t"):
+        res = await client.put(
+            "/api/config/claude-md",
+            content=body,
+            headers={"Content-Type": "text/plain"},
+        )
+        assert res.status_code == 400, f"expected 400 for body={body!r}"
+
+
+async def test_put_empty_does_not_overwrite(client: AsyncClient):
+    await client.put(
+        "/api/config/claude-md",
+        content="keep me",
+        headers={"Content-Type": "text/plain"},
+    )
+    res = await client.put(
+        "/api/config/claude-md",
+        content="",
+        headers={"Content-Type": "text/plain"},
+    )
+    assert res.status_code == 400
+    res = await client.get("/api/config/claude-md")
+    assert res.text == "keep me"
+
+
 async def test_claude_md_auth_required(client: AsyncClient, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("server.config.AUTH_TOKEN", "secret")
     res = await client.get("/api/config/claude-md")

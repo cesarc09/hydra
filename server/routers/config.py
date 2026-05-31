@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from server.auth import require_auth
 from server.db import get_db
@@ -19,6 +19,8 @@ async def get_claude_md():
 @router.put("/claude-md")
 async def put_claude_md(request: Request):
     content = (await request.body()).decode("utf-8")
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="CLAUDE.md content cannot be empty")
     now = datetime.now(UTC).replace(microsecond=0).isoformat()
     db = await get_db()
     await db.execute(
