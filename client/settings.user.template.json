@@ -5,11 +5,13 @@
     "pr": "",
     "commit": ""
   },
-  "effortLevel": "max",
+  "effortLevel": "xhigh",
   "showThinkingSummaries": true,
   "respectGitignore": true,
   "showTurnDuration": true,
-  "defaultMode": "auto",
+  "permissions": {
+    "defaultMode": "auto"
+  },
   "cleanupPeriodDays": 999,
   "statusLine": {
     "type": "command",

@@ -13,10 +13,10 @@ Crucially: a key *deleted* from the user file falls back to the template
 default rather than disappearing - so users can drop fields they don't want
 to customize without losing the default behavior.
 
-After merging, `effortLevel` is translated into `env.CLAUDE_CODE_EFFORT_LEVEL`
-because Claude Code only honors the env var for some values (notably `max`).
-Users still edit `effortLevel` in the user-facing template; the rewrite is
-invisible to them.
+User files scaffolded from older templates are migrated in place (and the
+migration is reported on stderr): `effortLevel: "max"` is dropped (it targeted
+the removed env-var path and can't be overridden in-session) and a top-level
+`defaultMode` is moved inside `permissions`, where Claude Code expects it.
 """
 
 from __future__ import annotations
@@ -53,21 +53,29 @@ def merge(hydra: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def promote_effort_level_to_env(settings: dict[str, Any]) -> dict[str, Any]:
-    """Move `effortLevel` into `env.CLAUDE_CODE_EFFORT_LEVEL`.
+def migrate_user_settings(user: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """One-time migrations for user files scaffolded from older templates.
 
-    Claude Code only honors the env var for some values (e.g. `max`), so we
-    rewrite the merged settings to always set it via `env`. Existing `env`
-    entries are preserved; an explicit `env.CLAUDE_CODE_EFFORT_LEVEL` wins
-    over the top-level `effortLevel`.
+    - `effortLevel: "max"` was the old scaffold default that fed the removed
+      env-var promotion (CLAUDE_CODE_EFFORT_LEVEL forced the level and could
+      not be overridden in-session). Drop it so the template default applies.
+      Any other value is a deliberate user choice and is kept.
+    - A top-level `defaultMode` predates the `permissions` wrapper Claude Code
+      expects; move it inside `permissions`, preserving its value.
+
+    Returns the migrated dict and whether anything changed.
     """
-    if "effortLevel" not in settings:
-        return settings
-    effort = settings.pop("effortLevel")
-    env = dict(settings.get("env") or {})
-    env.setdefault("CLAUDE_CODE_EFFORT_LEVEL", effort)
-    settings["env"] = env
-    return settings
+    migrated = dict(user)
+    changed = False
+    if migrated.get("effortLevel") == "max":
+        del migrated["effortLevel"]
+        changed = True
+    if "defaultMode" in migrated:
+        permissions = dict(migrated.get("permissions") or {})
+        permissions.setdefault("defaultMode", migrated.pop("defaultMode"))
+        migrated["permissions"] = permissions
+        changed = True
+    return migrated, changed
 
 
 def cmd_apply_settings(args: argparse.Namespace) -> None:
@@ -91,8 +99,16 @@ def cmd_apply_settings(args: argparse.Namespace) -> None:
     defaults = json.loads(user_template.read_text(encoding="utf-8"))
     user = json.loads(user_file.read_text(encoding="utf-8"))
 
+    user, user_changed = migrate_user_settings(user)
+    if user_changed:
+        user_file.write_text(json.dumps(user, indent=2) + "\n", encoding="utf-8")
+        print(
+            f"Migrated {user_file} to the current format "
+            f"(dropped stale effortLevel / moved defaultMode into permissions)",
+            file=sys.stderr,
+        )
+
     merged = merge(merge(hydra, defaults), user)
-    merged = promote_effort_level_to_env(merged)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")

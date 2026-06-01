@@ -6,7 +6,12 @@ import argparse
 import json
 from pathlib import Path
 
-from hydra_cli.apply_settings import cmd_apply_settings, merge, substitute
+from hydra_cli.apply_settings import (
+    cmd_apply_settings,
+    merge,
+    migrate_user_settings,
+    substitute,
+)
 
 
 def test_substitute_replaces_both_placeholders() -> None:
@@ -56,6 +61,43 @@ def test_merge_non_hooks_user_wins() -> None:
     assert out["autoUpdatesChannel"] == "latest"
 
 
+def test_migrate_drops_stale_max_effort_level() -> None:
+    out, changed = migrate_user_settings({"effortLevel": "max", "other": 1})
+    assert changed
+    assert "effortLevel" not in out
+    assert out["other"] == 1
+
+
+def test_migrate_keeps_explicit_effort_level() -> None:
+    out, changed = migrate_user_settings({"effortLevel": "low"})
+    assert not changed
+    assert out["effortLevel"] == "low"
+
+
+def test_migrate_moves_default_mode_into_permissions() -> None:
+    out, changed = migrate_user_settings({"defaultMode": "plan"})
+    assert changed
+    assert "defaultMode" not in out
+    assert out["permissions"] == {"defaultMode": "plan"}
+
+
+def test_migrate_default_mode_keeps_existing_permissions_entry() -> None:
+    out, changed = migrate_user_settings(
+        {"defaultMode": "auto", "permissions": {"defaultMode": "plan", "allow": ["Bash"]}}
+    )
+    assert changed
+    assert "defaultMode" not in out
+    # An explicit permissions.defaultMode wins over the legacy top-level key.
+    assert out["permissions"] == {"defaultMode": "plan", "allow": ["Bash"]}
+
+
+def test_migrate_noop_on_current_format() -> None:
+    current = {"effortLevel": "xhigh", "permissions": {"defaultMode": "auto"}}
+    out, changed = migrate_user_settings(current)
+    assert not changed
+    assert out == current
+
+
 def _ns(**kwargs: str) -> argparse.Namespace:
     return argparse.Namespace(**kwargs)
 
@@ -64,7 +106,7 @@ def test_apply_scaffolds_user_file_as_template_copy(tmp_path: Path) -> None:
     hydra_tpl = tmp_path / "hydra.json"
     hydra_tpl.write_text(json.dumps({"hooks": {}, "effortLevel": "high"}))
     user_tpl = tmp_path / "user.template.json"
-    user_tpl.write_text(json.dumps({"effortLevel": "max"}))
+    user_tpl.write_text(json.dumps({"effortLevel": "xhigh"}))
     user_file = tmp_path / "user.json"
     output = tmp_path / "out.json"
 
@@ -80,8 +122,8 @@ def test_apply_scaffolds_user_file_as_template_copy(tmp_path: Path) -> None:
     )
 
     # Scaffold copies the template so users see all knobs and edit in place.
-    assert json.loads(user_file.read_text()) == {"effortLevel": "max"}
-    assert json.loads(output.read_text())["effortLevel"] == "max"
+    assert json.loads(user_file.read_text()) == {"effortLevel": "xhigh"}
+    assert json.loads(output.read_text())["effortLevel"] == "xhigh"
 
 
 def test_apply_template_default_flows_when_user_file_lacks_key(tmp_path: Path) -> None:
@@ -118,7 +160,7 @@ def test_apply_preserves_existing_user_file(tmp_path: Path) -> None:
     hydra_tpl = tmp_path / "hydra.json"
     hydra_tpl.write_text(json.dumps({"hooks": {}, "effortLevel": "high"}))
     user_tpl = tmp_path / "user.template.json"
-    user_tpl.write_text(json.dumps({"effortLevel": "max"}))
+    user_tpl.write_text(json.dumps({"effortLevel": "xhigh"}))
     user_file = tmp_path / "user.json"
     user_file.write_text(json.dumps({"effortLevel": "low"}))
     output = tmp_path / "out.json"
@@ -136,6 +178,41 @@ def test_apply_preserves_existing_user_file(tmp_path: Path) -> None:
 
     assert json.loads(user_file.read_text())["effortLevel"] == "low"
     assert json.loads(output.read_text())["effortLevel"] == "low"
+
+
+def test_apply_migrates_old_format_user_file_on_disk(tmp_path: Path) -> None:
+    """Regression: stale scaffolds (`max` + top-level defaultMode) must not pin
+    the old behavior forever - they get migrated in place on the next run."""
+    hydra_tpl = tmp_path / "hydra.json"
+    hydra_tpl.write_text(json.dumps({"hooks": {}}))
+    user_tpl = tmp_path / "user.template.json"
+    user_tpl.write_text(
+        json.dumps({"effortLevel": "xhigh", "permissions": {"defaultMode": "auto"}})
+    )
+    user_file = tmp_path / "user.json"
+    user_file.write_text(json.dumps({"effortLevel": "max", "defaultMode": "auto"}))
+    output = tmp_path / "out.json"
+
+    cmd_apply_settings(
+        _ns(
+            hydra_template=str(hydra_tpl),
+            user_template=str(user_tpl),
+            user_file=str(user_file),
+            output=str(output),
+            hydra_url="http://h",
+            hydra_repo_path="/r",
+        )
+    )
+
+    # User file rewritten: stale max dropped, defaultMode wrapped in permissions.
+    migrated_user = json.loads(user_file.read_text())
+    assert migrated_user == {"permissions": {"defaultMode": "auto"}}
+    # Output: template default flows through; no env promotion, no top-level defaultMode.
+    out = json.loads(output.read_text())
+    assert out["effortLevel"] == "xhigh"
+    assert out["permissions"] == {"defaultMode": "auto"}
+    assert "defaultMode" not in out
+    assert "env" not in out
 
 
 def test_apply_substitutes_placeholders_in_hydra_template(tmp_path: Path) -> None:
@@ -194,7 +271,10 @@ def test_apply_end_to_end_with_real_template(tmp_path: Path) -> None:
     # Hydra hooks present
     assert "SessionStart" in out["hooks"]
     # User template keys present
-    assert out["effortLevel"] == "max"
+    assert out["effortLevel"] == "xhigh"
+    assert out["permissions"] == {"defaultMode": "auto"}
+    assert "defaultMode" not in out  # only valid nested under permissions
+    assert "env" not in out  # env-var promotion removed
     assert out["attribution"] == {"pr": "", "commit": ""}
     # statusLine has the shape Claude Code requires (rejects bare `{}`).
     assert out["statusLine"]["type"] == "command"
