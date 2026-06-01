@@ -50,7 +50,7 @@ server/
     hooks.py          - POST /api/hooks/event
     sessions.py       - GET sessions/events, SSE stream (require_auth_sse), editor config,
                         POST /sessions/{id}/archive|unarchive + /sessions/archive-ended
-    config.py         - GET/PUT /api/config/claude-md
+    config.py         - GET/PUT /api/config/claude-md (PUT rejects empty/whitespace-only bodies)
     memory.py         - CRUD /api/memory with upsert on (name, project_slug) + filtered GET
     projects.py       - CRUD /api/projects + auto-register + confirm endpoints
   services/
@@ -98,6 +98,7 @@ schema.sql            - DDL; sessions.archived_at, memories has project_slug FK 
 - **Session archive:** only `ended` / `idle` can be archived. SessionStart / UserPromptSubmit / PostToolUse clear `archived_at` - archived sessions auto-surface when they wake up. `Stop` alone does NOT unarchive.
 - **Dashboard pages:** `/` (sessions) and `/memory` (memory) are separate HTML/JS entry points. Shared helpers (`apiFetch`, `ensureToken`, `escHtml`) live in `static/utils.js`; both pages load it before their own script. No bundler.
 - **Memory scope:** type=user/feedback → global (project_slug=NULL); type=project/reference → pinned to cwd's registered project. `hydra sync` derives scope from type automatically.
+- **CLAUDE.md scope:** single-row, global-only (no project_slug column). Editable via the `/memory` dashboard or `python -m hydra_cli config put-claude-md <file>`. SessionStart hook curls the blob to `~/.claude/CLAUDE.md` (user-level), so a save propagates to every machine on next start. PUT rejects empty/whitespace-only bodies to prevent accidental wipe.
 - **Upsert semantics:** `POST /api/memory` upserts on `(name, project_slug)`. Partial unique indexes make NULL (global) names distinct from project-pinned names.
 - **SSE broadcast:** `session_manager._subscribers` is a list of `asyncio.Queue(maxsize=1000)`. Slow consumers are dropped on `QueueFull` rather than blocking the broadcast.
 - **Auth:** Fail-closed when `HYDRA_AUTH_TOKEN` is empty unless `HYDRA_ALLOW_NO_AUTH=1`. `require_auth` reads the `Authorization` header; `require_auth_sse` also accepts `?token=` (EventSource can't set headers).
