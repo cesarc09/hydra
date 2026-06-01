@@ -22,7 +22,7 @@ memory this session made stale or wrong.
 - Deletions: memory name + why.
 - Present them; on my approval, write approved files into the memory dir +
   update MEMORY.md, and delete confirmed ones with
-  `python -m hydra_cli memory delete <name>`.
+  `python -m hydra_cli memory delete <id>` (find the id via `memory list`).
 
 ## 3. Write the session summary
 Once 1-2 are settled, write the summary file (no approval needed).
