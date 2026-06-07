@@ -15,6 +15,24 @@ def _now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
+GLOBAL_TYPES = frozenset({"user", "feedback"})
+
+
+def _type_for_scope(mem_type: str, project_slug: str | None) -> str:
+    """Keep a memory's type consistent with its scope.
+
+    A pinned memory (project_slug set) must use a project-scoped type, so a
+    global type (user/feedback) is coerced to 'project'. Global memories keep
+    their type - we can't infer user vs feedback. This makes the dashboard's
+    "Move/Copy to project" auto-scope the type, and stops a pinned-but-global
+    row that `hydra sync` (which derives scope from type) would re-globalize
+    into a duplicate. `reference` is already project-scoped and passes through.
+    """
+    if project_slug is not None and mem_type in GLOBAL_TYPES:
+        return "project"
+    return mem_type
+
+
 @router.get("")
 async def list_memories(
     project_slug: str | None = None,
@@ -60,6 +78,7 @@ async def upsert_memory(memory: MemoryCreate) -> MemoryItem:
     """
     db = await get_db()
     now = _now()
+    mem_type = _type_for_scope(memory.type, memory.project_slug)
     # SQLite's ON CONFLICT requires naming the conflict target. Partial unique
     # indexes are valid targets; we use WHERE to pick the right one at runtime.
     if memory.project_slug is None:
@@ -71,7 +90,7 @@ async def upsert_memory(memory: MemoryCreate) -> MemoryItem:
             " body=excluded.body, updated_at=excluded.updated_at"
             " RETURNING *"
         )
-        params = (memory.name, memory.description, memory.type, memory.body, now, now)
+        params = (memory.name, memory.description, mem_type, memory.body, now, now)
     else:
         sql = (
             "INSERT INTO memories (name, description, type, body, project_slug,"
@@ -82,7 +101,7 @@ async def upsert_memory(memory: MemoryCreate) -> MemoryItem:
             " RETURNING *"
         )
         params = (
-            memory.name, memory.description, memory.type, memory.body,
+            memory.name, memory.description, mem_type, memory.body,
             memory.project_slug, now, now,
         )
     rows = list(await db.execute_fetchall(sql, params))
@@ -104,6 +123,14 @@ async def update_memory(memory_id: int, update: MemoryUpdate) -> MemoryItem:
     fields = {k: v for k, v in update.model_dump().items() if v is not None}
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
+
+    # Keep type consistent with scope when either is changing (e.g. pinning a
+    # global memory to a project via PUT without sending a new type).
+    eff_slug = fields.get("project_slug", current["project_slug"])
+    eff_type = fields.get("type", current["type"])
+    coerced = _type_for_scope(eff_type, eff_slug)
+    if coerced != eff_type:
+        fields["type"] = coerced
 
     fields["updated_at"] = now
     set_clause = ", ".join(f"{k} = ?" for k in fields)

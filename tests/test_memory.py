@@ -171,6 +171,53 @@ async def test_distribute_overwrites_existing_project_memory(client: AsyncClient
     assert over["body"] == "NEW"
 
 
+# --- Type <-> scope coercion ---
+
+
+async def test_pinned_global_type_coerced_to_project(client: AsyncClient):
+    """A global type pinned to a project is auto-scoped to 'project'. Covers the
+    dashboard Move/Copy-to-project flow and guards against a pinned-but-global
+    row that `hydra sync` would re-globalize into a duplicate."""
+    await _register_project(client, "alpha", "/tmp/alpha")
+    row = await _create_memory(
+        client, name="shared", type="feedback", project_slug="alpha",
+    )
+    assert row["project_slug"] == "alpha"
+    assert row["type"] == "project"
+
+
+async def test_pinned_reference_type_preserved(client: AsyncClient):
+    """reference is already a project-scoped type and must pass through."""
+    await _register_project(client, "alpha", "/tmp/alpha")
+    row = await _create_memory(
+        client, name="ref", type="reference", project_slug="alpha",
+    )
+    assert row["type"] == "reference"
+
+
+async def test_global_type_preserved_when_unpinned(client: AsyncClient):
+    """No coercion for global memories - user vs feedback is the caller's call."""
+    row = await _create_memory(client, name="g", type="feedback")
+    assert row["project_slug"] is None
+    assert row["type"] == "feedback"
+
+
+async def test_update_pinning_coerces_type(client: AsyncClient):
+    """Pinning a global memory via PUT (scope changes, type not sent) coerces
+    the type to 'project'."""
+    await _register_project(client, "alpha", "/tmp/alpha")
+    created = await _create_memory(client, name="m", type="feedback")
+    assert created["type"] == "feedback"
+
+    res = await client.put(
+        f"/api/memory/{created['id']}", json={"project_slug": "alpha"},
+    )
+    assert res.status_code == 200
+    updated = res.json()
+    assert updated["project_slug"] == "alpha"
+    assert updated["type"] == "project"
+
+
 # --- Filtered list ---
 
 
