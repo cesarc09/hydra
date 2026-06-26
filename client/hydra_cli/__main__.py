@@ -9,6 +9,7 @@ import sys
 
 from hydra_cli import api
 from hydra_cli.apply_settings import cmd_apply_settings
+from hydra_cli.commands import run_pull
 from hydra_cli.remote import cmd_capture_remote_url
 from hydra_cli.sync import cmd_sync
 
@@ -184,6 +185,43 @@ def cmd_config_put_claude_md(args: argparse.Namespace) -> None:
     _print_json(json.loads(body))
 
 
+# --- commands (server-distributed slash commands) ---
+
+
+def cmd_commands_pull(args: argparse.Namespace) -> None:
+    sys.exit(run_pull())
+
+
+def cmd_commands_put(args: argparse.Namespace) -> None:
+    with open(args.file, encoding="utf-8") as f:
+        content = f.read()
+    status, body = api.put_text(f"/api/config/commands/{args.name}", content)
+    if status != 200:
+        _die(status, body)
+    _print_json(json.loads(body))
+
+
+def cmd_commands_get(args: argparse.Namespace) -> None:
+    status, body = api.get(f"/api/config/commands/{args.name}")
+    if status != 200:
+        _die(status, body)
+    print(body, end="")
+
+
+def cmd_commands_list(args: argparse.Namespace) -> None:
+    status, body = api.get("/api/config/commands")
+    if status != 200:
+        _die(status, body)
+    for name in sorted(json.loads(body)):
+        print(name)
+
+
+def cmd_commands_delete(args: argparse.Namespace) -> None:
+    status, body = api.delete(f"/api/config/commands/{args.name}")
+    if status != 204:
+        _die(status, body)
+
+
 # --- argument parser ---
 
 
@@ -255,6 +293,24 @@ def build_parser() -> argparse.ArgumentParser:
     cp = cfg_sub.add_parser("put-claude-md")
     cp.add_argument("file")
 
+    # --- commands (server-distributed slash commands) ---
+    cmds = sub.add_parser("commands", help="server-distributed slash commands")
+    cmds_sub = cmds.add_subparsers(dest="command")
+
+    cmds_sub.add_parser("pull", help="hook: write server commands into ~/.claude/commands")
+
+    cput = cmds_sub.add_parser("put", help="publish a command from a file")
+    cput.add_argument("name")
+    cput.add_argument("file")
+
+    cget = cmds_sub.add_parser("get")
+    cget.add_argument("name")
+
+    cmds_sub.add_parser("list")
+
+    cdel = cmds_sub.add_parser("delete")
+    cdel.add_argument("name")
+
     # --- sync (no subcommand; flags drive direction) ---
     sync = sub.add_parser("sync", help="reconcile memories between local dir and hydra")
     sync.add_argument("--pull", action="store_true", help="download only")
@@ -297,6 +353,11 @@ DISPATCH = {
     ("project", "attach"): cmd_project_attach,
     ("config", "get-claude-md"): cmd_config_get_claude_md,
     ("config", "put-claude-md"): cmd_config_put_claude_md,
+    ("commands", "pull"): cmd_commands_pull,
+    ("commands", "put"): cmd_commands_put,
+    ("commands", "get"): cmd_commands_get,
+    ("commands", "list"): cmd_commands_list,
+    ("commands", "delete"): cmd_commands_delete,
     ("sync", None): cmd_sync,
     ("capture-remote-url", None): cmd_capture_remote_url,
     ("apply-settings", None): cmd_apply_settings,

@@ -50,7 +50,8 @@ server/
     hooks.py          - POST /api/hooks/event
     sessions.py       - GET sessions/events, SSE stream (require_auth_sse), editor config,
                         POST /sessions/{id}/archive|unarchive + /sessions/archive-ended
-    config.py         - GET/PUT /api/config/claude-md (PUT rejects empty/whitespace-only bodies)
+    config.py         - GET/PUT /api/config/claude-md (empty-body guard); CRUD
+                        /api/config/commands (name-validated slash-command blobs)
     memory.py         - CRUD /api/memory with upsert on (name, project_slug) + filtered GET
     projects.py       - CRUD /api/projects + auto-register + confirm endpoints
   services/
@@ -58,10 +59,12 @@ server/
     slug.py            - Slug normalization + stoplist for auto-registered projects
 client/
   hydra_cli/
-    __main__.py            - CLI dispatch (memory, project, config, sync,
+    __main__.py            - CLI dispatch (memory, project, config, commands, sync,
                               capture-remote-url, apply-settings)
     api.py                 - Stdlib urllib + bearer token + User-Agent header
     sync.py                - Bidirectional memory sync, frontmatter parse, MEMORY.md regen
+    commands.py            - `commands pull`: fetch the server command map, write
+                              ~/.claude/commands/<name>.md, state-file-scoped prune
     remote.py              - Stop-hook entry: scans transcript for bridge_status, PUTs URL
     apply_settings.py      - 3-way merge for ~/.claude/settings.json
                               (hydra hooks → template defaults → user overrides)
@@ -69,11 +72,15 @@ client/
   settings.user.template.json - User-pref defaults (effortLevel, attribution, statusLine, …);
                                 scaffolded to ~/.claude/settings.user.json on first run
   statusline.sh            - Default status-line script; scaffolded to ~/.claude/ (only if absent)
-  commands/sync.md         - /sync slash command (session wrap-up: propose doc + memory
-                              updates, then write a per-session summary); scaffolded to
-                              ~/.claude/commands/ (overwritten each run so repo edits propagate)
+  commands/sync.md         - /sync slash command source. Authoring home for PUBLIC
+                              commands; seeded into the server by scripts/publish_commands.sh
+                              and pulled to ~/.claude/commands/ via the `commands pull` hook
+                              (the server is the single distribution source)
   setup.sh                 - pip-installs hydra_cli, runs apply-settings to render
-                              ~/.claude/settings.json, then scaffolds statusline.sh + commands/
+                              ~/.claude/settings.json, then scaffolds statusline.sh
+scripts/
+  publish_commands.sh   - Seed a dir of *.md (default client/commands/) into the server's
+                          command store; the source dir is an argument
 static/
   index.html, app.js   - Sessions dashboard (/); archive, Recent Events chip filter
   memory.html, memory.js - Memory dashboard (/memory); browse, delete, copy, move,
@@ -87,9 +94,12 @@ tests/
   test_memory.py      - Memory CRUD + upsert + project scoping + filtered list
   test_projects.py    - Project CRUD
   test_sync.py        - CLI sync (pull, push, bidirectional, conflict detection)
+  test_commands.py    - /api/config/commands endpoints (CRUD, name validation, auth)
+  test_commands_pull.py - `commands pull` write + state-file-scoped prune
   test_session_archive.py - Archive endpoints + auto-unarchive on new activity
   test_startup.py     - Fail-closed startup guard
-schema.sql            - DDL; sessions.archived_at, memories has project_slug FK + partial unique indexes
+schema.sql            - DDL; sessions.archived_at, memories project_slug FK + partial unique
+                        indexes, config_commands (server-distributed slash commands)
 ```
 
 ## Key Patterns
@@ -100,6 +110,7 @@ schema.sql            - DDL; sessions.archived_at, memories has project_slug FK 
 - **Memory scope:** type=user/feedback → global (project_slug=NULL); type=project/reference → pinned to cwd's registered project. `hydra sync` derives scope from type automatically.
 - **Type↔scope invariant:** a pinned memory (project_slug set) is forced to a project-scoped type - the server (`_type_for_scope` in `routers/memory.py`) coerces user/feedback → `project` on upsert *and* update; `reference` and global types pass through. This makes the dashboard's Move/Copy-to-project auto-scope the type, and prevents a pinned-but-global row that `hydra sync` (scope-from-type) would otherwise re-globalize into a duplicate.
 - **CLAUDE.md scope:** single-row, global-only (no project_slug column). Editable via the `/memory` dashboard or `python -m hydra_cli config put-claude-md <file>`. SessionStart hook curls the blob to `~/.claude/CLAUDE.md` (user-level), so a save propagates to every machine on next start. PUT rejects empty/whitespace-only bodies to prevent accidental wipe.
+- **Slash-command distribution:** the server is the single distribution source for slash commands. `config_commands` is a `name -> content` blob table; `GET /api/config/commands` returns the whole `{name: content}` map in one round trip (no manifest - YAGNI), plus per-name GET/PUT/DELETE. Names are validated server-side to `^[A-Za-z0-9][A-Za-z0-9_-]*$` (no path separators / leading dot). The SessionStart `commands pull` hook writes each into `~/.claude/commands/<name>.md` **verbatim** - deliberately NOT via `sync.py`'s `_slugify_filename`, which would rename `code-review` → `code_review` and break the command - and prunes via a managed-names state file (`~/.claude/.hydra-commands.json`) so it only ever deletes files it wrote, never hand-authored ones. Public commands are authored in `client/commands/` and seeded with `scripts/publish_commands.sh` (run on deploy); private/per-deployment commands are seeded from their own source, so Hydra's repo carries no deployment-specific command content.
 - **Upsert semantics:** `POST /api/memory` upserts on `(name, project_slug)`. Partial unique indexes make NULL (global) names distinct from project-pinned names.
 - **SSE broadcast:** `session_manager._subscribers` is a list of `asyncio.Queue(maxsize=1000)`. Slow consumers are dropped on `QueueFull` rather than blocking the broadcast.
 - **Auth:** Fail-closed when `HYDRA_AUTH_TOKEN` is empty unless `HYDRA_ALLOW_NO_AUTH=1`. `require_auth` reads the `Authorization` header; `require_auth_sse` also accepts `?token=` (EventSource can't set headers).

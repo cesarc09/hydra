@@ -35,6 +35,16 @@ CREATE TABLE IF NOT EXISTS claude_md (
     updated_at TEXT NOT NULL
 );
 
+-- Server-distributed slash commands. One row per command; name is the
+-- slash-command name without ".md" (e.g. "sync", "finish"). Content is an
+-- opaque markdown blob - the server never interprets it. Clients pull these
+-- into ~/.claude/commands/<name>.md.
+CREATE TABLE IF NOT EXISTS config_commands (
+    name       TEXT PRIMARY KEY,
+    content    TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 -- Project registry. Paths live in project_paths so the same project can
 -- exist at different filesystem paths on different machines.
 CREATE TABLE IF NOT EXISTS projects (

@@ -16,6 +16,11 @@
           },
           {
             "type": "command",
+            "command": "python -m hydra_cli commands pull >/dev/null 2>&1 || true",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "curl -sf -H \"Authorization: Bearer $HYDRA_AUTH_TOKEN\" \"${HYDRA_URL:-http://localhost:8400}/api/config/claude-md\" -o /tmp/hydra-claude-md.tmp && mv /tmp/hydra-claude-md.tmp ~/.claude/CLAUDE.md || true",
             "timeout": 5
           },
