@@ -14,6 +14,11 @@ def _base_url() -> str:
     return os.environ.get("HYDRA_URL", DEFAULT_URL).rstrip("/")
 
 
+def base_url() -> str:
+    """Public accessor for the configured Hydra base URL (used by `doctor`)."""
+    return _base_url()
+
+
 def _token() -> str:
     return os.environ.get("HYDRA_AUTH_TOKEN", "")
 

@@ -41,7 +41,8 @@ Both must pass clean. Fix issues before committing.
 ```
 server/
   app.py              - FastAPI entry, lifespan startup guard, body-size middleware, CORS,
-                        /memory route -> static/memory.html
+                        /api/health (unauthenticated liveness+DB probe), /memory route
+                        -> static/memory.html
   auth.py             - require_auth + require_auth_sse (accepts ?token= for EventSource)
   config.py           - env vars (AUTH_TOKEN, BIND_HOST, PUBLIC_ORIGIN, ALLOW_NO_AUTH, DB_PATH)
   db.py               - SQLite singleton + idempotent migrations (project_slug, archived_at)
@@ -59,7 +60,7 @@ server/
     slug.py            - Slug normalization + stoplist for auto-registered projects
 client/
   hydra_cli/
-    __main__.py            - CLI dispatch (memory, project, config, commands, sync,
+    __main__.py            - CLI dispatch (memory, project, config, commands, sync, doctor,
                               capture-remote-url, apply-settings)
     api.py                 - Stdlib urllib + bearer token + User-Agent header
     sync.py                - Bidirectional memory sync, frontmatter parse, MEMORY.md regen
@@ -72,10 +73,12 @@ client/
   settings.user.template.json - User-pref defaults (effortLevel, attribution, statusLine, …);
                                 scaffolded to ~/.claude/settings.user.json on first run
   statusline.sh            - Default status-line script; scaffolded to ~/.claude/ (only if absent)
-  commands/sync.md         - /sync slash command source. Authoring home for PUBLIC
-                              commands; seeded into the server by scripts/publish_commands.sh
-                              and pulled to ~/.claude/commands/ via the `commands pull` hook
-                              (the server is the single distribution source)
+  commands/                - Authoring home for PUBLIC slash-command sources (*.md):
+                              seeded into the server by scripts/publish_commands.sh and
+                              pulled to ~/.claude/commands/ via the `commands pull` hook
+                              (the server is the single distribution source).
+    debug-hydra.md         - /debug-hydra: thin slash - runs `hydra doctor` and has Claude
+                              interpret the result (health verdict, anomalies, fixes).
   setup.sh                 - pip-installs hydra_cli, runs apply-settings to render
                               ~/.claude/settings.json, then scaffolds statusline.sh
 scripts/
@@ -96,6 +99,8 @@ tests/
   test_sync.py        - CLI sync (pull, push, bidirectional, conflict detection)
   test_commands.py    - /api/config/commands endpoints (CRUD, name validation, auth)
   test_commands_pull.py - `commands pull` write + state-file-scoped prune
+  test_health.py      - /api/health probe (200 + DB ok; reachable without auth)
+  test_doctor.py      - `hydra doctor` report (stats aggregation + anomaly checks, mocked api)
   test_session_archive.py - Archive endpoints + auto-unarchive on new activity
   test_startup.py     - Fail-closed startup guard
 schema.sql            - DDL; sessions.archived_at, memories project_slug FK + partial unique
@@ -111,6 +116,7 @@ schema.sql            - DDL; sessions.archived_at, memories project_slug FK + pa
 - **Type↔scope invariant:** a pinned memory (project_slug set) is forced to a project-scoped type - the server (`_type_for_scope` in `routers/memory.py`) coerces user/feedback → `project` on upsert *and* update; `reference` and global types pass through. This makes the dashboard's Move/Copy-to-project auto-scope the type, and prevents a pinned-but-global row that `hydra sync` (scope-from-type) would otherwise re-globalize into a duplicate.
 - **CLAUDE.md scope:** single-row, global-only (no project_slug column). Editable via the `/memory` dashboard or `python -m hydra_cli config put-claude-md <file>`. SessionStart hook curls the blob to `~/.claude/CLAUDE.md` (user-level), so a save propagates to every machine on next start. PUT rejects empty/whitespace-only bodies to prevent accidental wipe.
 - **Slash-command distribution:** the server is the single distribution source for slash commands. `config_commands` is a `name -> content` blob table; `GET /api/config/commands` returns the whole `{name: content}` map in one round trip (no manifest - YAGNI), plus per-name GET/PUT/DELETE. Names are validated server-side to `^[A-Za-z0-9][A-Za-z0-9_-]*$` (no path separators / leading dot). The SessionStart `commands pull` hook writes each into `~/.claude/commands/<name>.md` **verbatim** - deliberately NOT via `sync.py`'s `_slugify_filename`, which would rename `code-review` → `code_review` and break the command - and prunes via a managed-names state file (`~/.claude/.hydra-commands.json`) so it only ever deletes files it wrote, never hand-authored ones. Public commands are authored in `client/commands/` and seeded with `scripts/publish_commands.sh` (run on deploy); private/per-deployment commands are seeded from their own source, so Hydra's repo carries no deployment-specific command content.
+- **Instance diagnostics (`hydra doctor` + `/debug-hydra`):** the gathering lives in the CLI, not the slash command. `hydra doctor` probes `/api/health` (unauthenticated, catches `URLError` → server DOWN), then an authed call (200/401 → auth state), then aggregates stats and checks corpus invariants (user/feedback memories pinned to a project, memories on an unregistered slug, pathless projects, pending review). It prints a labeled report and **exits 0 with status in the text** so a wrapper never loses output - run it standalone for a zero-token health check. `/debug-hydra` just runs it and spends tokens on interpretation: a slash command earns its round-trip only when the LLM adds judgment, so raw stats belong in the CLI, never a relay-only command. `/api/health` must be deployed (server restart) before doctor reports `server: UP`; a stale server 404s as `DEGRADED`.
 - **Upsert semantics:** `POST /api/memory` upserts on `(name, project_slug)`. Partial unique indexes make NULL (global) names distinct from project-pinned names.
 - **SSE broadcast:** `session_manager._subscribers` is a list of `asyncio.Queue(maxsize=1000)`. Slow consumers are dropped on `QueueFull` rather than blocking the broadcast.
 - **Auth:** Fail-closed when `HYDRA_AUTH_TOKEN` is empty unless `HYDRA_ALLOW_NO_AUTH=1`. `require_auth` reads the `Authorization` header; `require_auth_sse` also accepts `?token=` (EventSource can't set headers).

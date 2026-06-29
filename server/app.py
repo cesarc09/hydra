@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from server import config
@@ -126,6 +126,18 @@ app.include_router(sessions.router)
 app.include_router(config_router.router)
 app.include_router(memory.router)
 app.include_router(projects.router)
+
+
+@app.get("/api/health")
+async def health():
+    """Unauthenticated liveness + DB probe. Lets `hydra doctor` tell a down
+    server apart from a wedged DB or a bad auth token (health needs no token)."""
+    try:
+        db = await get_db()
+        await db.execute("SELECT 1")
+    except Exception:
+        return JSONResponse({"status": "degraded", "db": "error"}, status_code=503)
+    return {"status": "ok", "db": "ok"}
 
 
 @app.get("/memory")

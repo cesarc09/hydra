@@ -222,6 +222,109 @@ def cmd_commands_delete(args: argparse.Namespace) -> None:
         _die(status, body)
 
 
+# --- doctor (instance health + stats + anomaly checks) ---
+
+
+def _fmt_offenders(items: list[str], cap: int = 5) -> str:
+    shown = ", ".join(items[:cap])
+    extra = len(items) - cap
+    return shown + (f" (+{extra} more)" if extra > 0 else "")
+
+
+def cmd_doctor(args: argparse.Namespace) -> None:
+    """Deterministic instance diagnostics: connectivity, auth, stats, and data
+    anomalies. Prints a compact report and exits 0 - status lives in the text,
+    so a wrapper never loses the report to a non-zero exit code."""
+    import urllib.error
+    from collections import Counter
+
+    url = api.base_url()
+    out: list[str] = [f"Hydra doctor  -  {url}", ""]
+
+    # 1. Connectivity (unauthenticated health probe).
+    try:
+        h_status, h_body = api.get("/api/health")
+    except urllib.error.URLError as e:
+        out += [f"server:    DOWN  ({e.reason})", "",
+                "Cannot reach the server. Start it, or check HYDRA_URL."]
+        print("\n".join(out))
+        return
+    if h_status == 200:
+        db_ok = json.loads(h_body).get("db") == "ok"
+        out += ["server:    UP", f"database:  {'OK' if db_ok else 'ERROR'}"]
+    else:
+        out.append(f"server:    DEGRADED (HTTP {h_status})")
+
+    # 2. Auth (authenticated probe).
+    token_set = bool(os.environ.get("HYDRA_AUTH_TOKEN"))
+    p_status, p_body = api.get("/api/projects")
+    if p_status == 401:
+        out.append("auth:      FAILED (401) - HYDRA_AUTH_TOKEN unset or wrong")
+        print("\n".join(out))
+        return
+    if p_status != 200:
+        out.append(f"auth:      ERROR (HTTP {p_status} on /api/projects)")
+        print("\n".join(out))
+        return
+    out.append(f"auth:      OK ({'token set' if token_set else 'no token / open server'})")
+
+    proj = json.loads(p_body)
+    m_status, m_body = api.get("/api/memory")
+    mem = json.loads(m_body) if m_status == 200 else []
+
+    # 3. Stats.
+    pending = [p["slug"] for p in proj if p.get("auto_registered_at")]
+    paths = [pt for p in proj for pt in p.get("paths", [])]
+    machines = {pt.get("instance_id") for pt in paths}
+    by_type = Counter(m.get("type", "?") for m in mem)
+    n_global = sum(1 for m in mem if not m.get("project_slug"))
+    by_proj = Counter(m["project_slug"] for m in mem if m.get("project_slug"))
+
+    out.append("")
+    out.append(
+        f"projects:  {len(proj)} total ({len(pending)} pending review,"
+        f" {len(proj) - len(pending)} confirmed), {len(paths)} paths /"
+        f" {len(machines)} machines"
+    )
+    types = " | ".join(
+        f"{t} {by_type.get(t, 0)}" for t in ("user", "feedback", "project", "reference")
+    )
+    out.append(f"memories:  {len(mem)} total ({n_global} global,"
+               f" {len(mem) - n_global} pinned)")
+    out.append(f"           {types}")
+    if by_proj:
+        out.append("top:       " + ", ".join(f"{s} {c}" for s, c in by_proj.most_common(5)))
+
+    # 4. Anomaly checks (corpus invariants).
+    slugs = {p["slug"] for p in proj}
+    pinned_global = [
+        f"#{m['id']} {m['name']} (project={m['project_slug']})"
+        for m in mem
+        if m.get("project_slug") and m.get("type") in ("user", "feedback")
+    ]
+    orphans = [
+        f"#{m['id']} {m['name']} (project={m['project_slug']})"
+        for m in mem
+        if m.get("project_slug") and m["project_slug"] not in slugs
+    ]
+    pathless = [p["slug"] for p in proj if not p.get("paths")]
+
+    def check(items: list[str], label: str) -> str:
+        if not items:
+            return f"  [OK]   {label}: 0"
+        return f"  [WARN] {label}: {len(items)} - {_fmt_offenders(items)}"
+
+    out.append("")
+    out.append("anomalies:")
+    out.append(check(pinned_global,
+                     "user/feedback memories pinned to a project (type<->scope invariant)"))
+    out.append(check(orphans, "memories pinned to an unregistered slug (orphans)"))
+    out.append(check(pathless, "projects with no registered path"))
+    out.append(check(pending, "projects pending review (auto-registered, unconfirmed)"))
+
+    print("\n".join(out))
+
+
 # --- argument parser ---
 
 
@@ -318,6 +421,9 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--cwd", help="override cwd (hooks pass $PWD)")
     sync.add_argument("--dry-run", action="store_true")
 
+    # --- doctor (instance health + stats + anomaly checks) ---
+    sub.add_parser("doctor", help="diagnose this Hydra instance (health, stats, anomalies)")
+
     # --- capture-remote-url (Stop hook entry; reads payload from stdin) ---
     sub.add_parser(
         "capture-remote-url",
@@ -359,6 +465,7 @@ DISPATCH = {
     ("commands", "list"): cmd_commands_list,
     ("commands", "delete"): cmd_commands_delete,
     ("sync", None): cmd_sync,
+    ("doctor", None): cmd_doctor,
     ("capture-remote-url", None): cmd_capture_remote_url,
     ("apply-settings", None): cmd_apply_settings,
 }
@@ -378,7 +485,7 @@ def main() -> None:
     # `sync`, `capture-remote-url`, and `apply-settings` are leaf commands;
     # others need a subcommand.
     command = getattr(args, "command", None)
-    leaf_groups = {"sync", "capture-remote-url", "apply-settings"}
+    leaf_groups = {"sync", "doctor", "capture-remote-url", "apply-settings"}
     if args.group not in leaf_groups and not command:
         parser.print_help()
         sys.exit(1)
