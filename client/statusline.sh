@@ -1,18 +1,27 @@
 #!/bin/bash
 # Default Hydra status line - context-window progress bar + model name.
 # Copied to ~/.claude/statusline.sh by setup.sh (only on first run; user
-# customizations there survive subsequent runs). Requires `jq`.
+# customizations there survive subsequent runs). Parses stdin with python
+# (no jq dependency - python is already assumed by the Hydra hooks).
 
-input=$(cat)
+PY="$(command -v python3 || command -v python)"
+[ -z "$PY" ] && { echo "[statusline: python not found]"; exit 0; }
 
-MODEL=$(echo "$input" | jq -r '.model.display_name')
-PCT=$(echo "$input" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
-
-BAR_WIDTH=10
-FILLED=$((PCT * BAR_WIDTH / 100))
-EMPTY=$((BAR_WIDTH - FILLED))
-BAR=""
-[ "$FILLED" -gt 0 ] && printf -v FILL "%${FILLED}s" && BAR="${FILL// /▓}"
-[ "$EMPTY" -gt 0 ] && printf -v PAD "%${EMPTY}s" && BAR="${BAR}${PAD// /░}"
-
-echo "[$MODEL] $BAR $PCT%"
+export PYTHONIOENCODING=utf-8
+exec "$PY" -c '
+import sys, json
+model, pct = "", 0
+try:
+    data = json.load(sys.stdin)
+    m = data.get("model")
+    if isinstance(m, dict):
+        model = m.get("display_name") or ""
+    cw = data.get("context_window")
+    if isinstance(cw, dict):
+        pct = int(float(cw.get("used_percentage") or 0))
+except Exception:
+    pass
+pct = max(0, min(100, pct))
+filled = pct * 10 // 100
+print("[%s] %s %d%%" % (model, "▓" * filled + "░" * (10 - filled), pct))
+'
