@@ -15,7 +15,7 @@ Backfill any project memories on this machine that haven't reached the Hydra ser
 1. **Precondition check.** Confirm `python -m hydra_cli --help` runs and `python -m hydra_cli project list` returns a JSON array. If either fails, stop and tell me - the fix lives in [onboard-prompt.md](onboard-prompt.md), not here.
 
 2. **Discover candidate cwds.** Use your judgment - you know what a project looks like on a dev machine. Useful signals:
-   - `~/.claude/projects/*/` - every cwd Claude Code has touched on this machine. The directory name encodes the absolute path with `:`, `\`, `/` replaced by `-`. Decode each one and verify the path exists on disk; skip phantoms.
+   - `~/.claude/projects/*/` - every cwd Claude Code has touched on this machine. The directory name encodes the absolute path with every non-alphanumeric character (including `_` and `.`, not just `: \ /`) replaced by `-`. Decode each one and verify the path exists on disk; skip phantoms.
    - `.git` directories under common dev roots (`~/projects`, `~/code`, `~/work`, `~/dev`).
    - Any other dev-project signals you'd reasonably check.
    

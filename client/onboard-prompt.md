@@ -22,7 +22,7 @@ Onboard this machine as a Hydra client. Hydra is a cross-machine control plane f
 
    Don't duplicate existing lines. Also `export` the vars in the current shell so the next steps can use them.
 
-3. Run `bash ~/projects/hydra/client/setup.sh`. Installs `~/.claude/settings.json` (hooks pointing at `$HYDRA_URL`) and the `hydra_cli` package. **Run setup.sh from a shell where `python` and `pip` resolve to the same interpreter - usually the base user/system Python, not a venv.** The hooks call `python -m hydra_cli`, so the package must live in whichever Python is first on `PATH` at hook spawn time. If `pip install -e` fails with PEP 668, retry with `pip install --user -e ~/projects/hydra/client`. Verify `python -m hydra_cli --help` works.
+3. Run `bash ~/projects/hydra/client/setup.sh`. Installs `~/.claude/settings.json` (hooks pointing at `$HYDRA_URL`) and the `hydra_cli` package. **Run setup.sh from a shell where `python` and `pip` resolve to the same interpreter - usually the base user/system Python, not a venv.** The hooks call `python -m hydra_cli`, so the package must live in whichever Python is first on `PATH` at hook spawn time. On PEP 668 (externally-managed) Python, setup.sh automatically retries with `pip install --user --break-system-packages`, so no manual step is needed. Verify `python -m hydra_cli --help` works.
 
 4. Register every project directory on this machine where I use Claude Code. Ask me for the list if you don't know; at minimum register `~/projects/hydra` if it exists:
 

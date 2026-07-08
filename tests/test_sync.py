@@ -183,8 +183,8 @@ def test_memory_dir_for_cwd_posix(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
 
 
 def test_memory_dir_for_cwd_windows(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """Claude Code encodes `:` and `\\` as `-`. Before this fix the slug only
-    replaced `/`, yielding a nonsense dir on Windows."""
+    """Claude Code encodes every non-alphanumeric char (incl. `:` and `\\`) as
+    `-`, so a Windows-style path maps cleanly."""
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     # os.path.abspath is a no-op on absolute Windows-style paths when run on
     # Linux, so it's safe to drive this test cross-platform with a raw string.
@@ -193,6 +193,21 @@ def test_memory_dir_for_cwd_windows(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert (
         d == tmp_path / ".claude" / "projects" / "C--Users-giosu-projects-pcb" / "memory"
     )
+
+
+def test_memory_dir_for_cwd_underscore(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Claude Code maps `_` to `-` too. A slug that kept the underscore would
+    point at a nonexistent dir and sync 0 files silently (the reported bug)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    d = sync_mod.memory_dir_for_cwd("/home/me/foo_bar")
+    assert d == tmp_path / ".claude" / "projects" / "-home-me-foo-bar" / "memory"
+
+
+def test_memory_dir_for_cwd_dotted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Dots (and any other non-alphanumeric) also collapse to `-`."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    d = sync_mod.memory_dir_for_cwd("/home/me/my.proj")
+    assert d == tmp_path / ".claude" / "projects" / "-home-me-my-proj" / "memory"
 
 
 def test_resolve_project_slug_matches_any_registered_path(
@@ -337,6 +352,19 @@ def test_push_skips_project_memory_when_cwd_stoplisted(
     assert fake_api.memories == []
     err = capsys.readouterr().err
     assert "no project registered" in err
+
+
+def test_push_warns_when_memory_dir_missing(
+    fake_api: FakeAPI, memory_dir: Path, capsys: pytest.CaptureFixture[str]
+):
+    """If the computed memory dir doesn't exist, a --push must warn instead of
+    silently reporting 0 pushed (the wrong-slug failure mode)."""
+    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
+    # NB: deliberately do NOT mkdir memory_dir - simulate a missing dir.
+    code = sync_mod.run_sync("/test/proj", do_pull=False, do_push=True)
+    assert code == 0
+    err = capsys.readouterr().err
+    assert "no memory dir" in err
 
 
 # --- Bidirectional --------------------------------------------------------

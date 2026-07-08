@@ -42,12 +42,19 @@ EMITTED_FM_KEYS = ("name", "description", "type")
 def memory_dir_for_cwd(cwd: str) -> Path:
     """Map a project cwd to Claude Code's local memory dir.
 
-    Claude Code encodes the project path by replacing `:`, `\\`, and `/` with
-    `-`. E.g. /home/giosue/projects/hydra → -home-giosue-projects-hydra,
-    C:\\Users\\giosu\\projects\\pcb → C--Users-giosu-projects-pcb.
+    Claude Code encodes the project path by replacing EVERY non-alphanumeric
+    character with `-` (not just the path separators). E.g.
+    /home/giosue/projects/hydra → -home-giosue-projects-hydra,
+    C:\\Users\\giosu\\projects\\pcb → C--Users-giosu-projects-pcb,
+    /home/me/foo_bar → -home-me-foo-bar, /home/me/my.proj → -home-me-my-proj.
+
+    This mirrors Claude Code's own encoder (`x.replace(/[^a-zA-Z0-9]/g, "-")`);
+    a slug that keeps `_`/`.` would point at a nonexistent dir and sync 0 files
+    silently. CC also truncates + hashes paths over 200 chars - not replicated
+    here; run_sync warns instead when the computed dir is missing.
     """
     cwd = os.path.abspath(cwd)
-    slug = cwd.replace(":", "-").replace("\\", "-").replace("/", "-")
+    slug = re.sub(r"[^A-Za-z0-9]", "-", cwd)
     return Path.home() / ".claude" / "projects" / slug / "memory"
 
 
@@ -281,6 +288,12 @@ def run_sync(
     memory_dir = memory_dir_for_cwd(cwd)
 
     local_files = walk_local_memories(memory_dir)
+    if do_push and not memory_dir.is_dir():
+        print(
+            f"  warning: no memory dir at {memory_dir} - nothing to push"
+            " (wrong project, or none saved yet?)",
+            file=sys.stderr,
+        )
     local_by_key: dict[tuple[str, str | None], tuple[Path, dict[str, Any]]] = {}
     for path, mem in local_files:
         mem["project_slug"] = effective_project_slug(mem["type"], current_slug)

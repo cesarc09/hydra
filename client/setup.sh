@@ -23,10 +23,11 @@ HYDRA_REPO_PATH="$(dirname "$SCRIPT_DIR")"
 # `python -m pip`, not bare `pip` (which may belong to a different Python, or be
 # absent while `pip3` exists). Keep it in an `if` so a pip failure can't make
 # `set -e` abort the whole script silently, and let pip's error surface.
-if python -m pip install -e "$SCRIPT_DIR" --quiet; then
+if python -m pip install -e "$SCRIPT_DIR" --quiet \
+   || python -m pip install --user --break-system-packages -e "$SCRIPT_DIR" --quiet; then
     echo "  Installed: hydra CLI"
 else
-    echo "  WARNING: 'python -m pip install -e $SCRIPT_DIR' failed - see output above." >&2
+    echo "  WARNING: pip install failed (also tried --user --break-system-packages) - see output above." >&2
 fi
 
 # Gate on the CLI being importable by `python` before apply-settings needs it,
