@@ -113,21 +113,48 @@ async def test_upsert_replaces_existing_global(client: AsyncClient):
     assert len(res.json()) == 1
 
 
-async def test_upsert_distinct_when_project_differs(client: AsyncClient):
+async def test_same_name_in_another_scope_returns_409(client: AsyncClient):
+    """Names are globally unique. A POST that would land an existing name in a
+    different scope is refused - this is what stops a by-name sync push from
+    silently unpinning a memory someone deliberately scoped to a project."""
     await _register_project(client, "alpha", "/tmp/alpha")
-    await _register_project(client, "beta", "/tmp/beta")
+    await _create_memory(client, name="shared", project_slug="alpha", body="A")
 
-    a = await _create_memory(client, name="shared", project_slug="alpha", body="A")
-    b = await _create_memory(client, name="shared", project_slug="beta", body="B")
-    assert a["id"] != b["id"]
-    assert a["project_slug"] == "alpha"
-    assert b["project_slug"] == "beta"
+    res = await client.post(
+        "/api/memory",
+        json={"name": "shared", "type": "feedback", "body": "B"},  # global
+    )
+    assert res.status_code == 409
+    assert "globally unique" in res.json()["detail"]
+
+    res = await client.get("/api/memory")
+    rows = res.json()
+    assert len(rows) == 1
+    assert rows[0]["project_slug"] == "alpha"
+    assert rows[0]["body"] == "A"
+
+
+async def test_post_with_rescope_moves_row_in_place(client: AsyncClient):
+    """rescope=true is the explicit opt-in: the existing row moves scope and
+    keeps its id (no new row, so no mirror file is orphaned)."""
+    await _register_project(client, "alpha", "/tmp/alpha")
+    created = await _create_memory(client, name="shared", type="feedback")
+    assert created["project_slug"] is None
+
+    moved = await _create_memory(
+        client, name="shared", type="feedback", project_slug="alpha", rescope=True,
+    )
+    assert moved["id"] == created["id"]
+    assert moved["project_slug"] == "alpha"
+    assert moved["type"] == "project"  # coerced to a project-scoped type
+
+    res = await client.get("/api/memory")
+    assert len(res.json()) == 1
 
 
 async def test_distribute_global_to_multiple_projects(client: AsyncClient):
-    """Simulates the dashboard's Move-to-projects flow: POST same name into N
-    project slugs, then DELETE the global. The N project copies should remain
-    intact with distinct ids."""
+    """The dashboard's Move-to-projects flow under globally-unique names: each
+    target gets its own suffixed name, then the global original is deleted."""
     await _register_project(client, "alpha", "/tmp/alpha")
     await _register_project(client, "beta", "/tmp/beta")
     await _register_project(client, "gamma", "/tmp/gamma")
@@ -139,7 +166,8 @@ async def test_distribute_global_to_multiple_projects(client: AsyncClient):
     saved = []
     for slug in ("alpha", "beta", "gamma"):
         row = await _create_memory(
-            client, name="shared", body="GLOBAL", type="user", project_slug=slug,
+            client, name=f"shared-{slug}", body="GLOBAL", type="user",
+            project_slug=slug, rescope=True,
         )
         saved.append(row)
 
@@ -154,7 +182,9 @@ async def test_distribute_global_to_multiple_projects(client: AsyncClient):
     rows = res.json()
     assert len(rows) == 3
     assert {row["project_slug"] for row in rows} == {"alpha", "beta", "gamma"}
-    assert all(row["name"] == "shared" for row in rows)
+    assert {row["name"] for row in rows} == {
+        "shared-alpha", "shared-beta", "shared-gamma",
+    }
     assert all(row["body"] == "GLOBAL" for row in rows)
 
     res = await client.get(f"/api/memory/{global_id}")
@@ -216,6 +246,99 @@ async def test_update_pinning_coerces_type(client: AsyncClient):
     updated = res.json()
     assert updated["project_slug"] == "alpha"
     assert updated["type"] == "project"
+
+
+async def test_update_unpins_to_global_with_explicit_null(client: AsyncClient):
+    """An explicit project_slug=null unpins. Only reachable because the PUT uses
+    exclude_unset - dropping every None would make an unpin unexpressible, which
+    is what forced re-scopes through delete + re-create (and minted duplicates)."""
+    await _register_project(client, "alpha", "/tmp/alpha")
+    created = await _create_memory(
+        client, name="m", type="project", project_slug="alpha",
+    )
+
+    res = await client.put(
+        f"/api/memory/{created['id']}",
+        json={"project_slug": None, "type": "feedback"},
+    )
+    assert res.status_code == 200
+    updated = res.json()
+    assert updated["id"] == created["id"]  # same row, no new id
+    assert updated["project_slug"] is None
+    assert updated["type"] == "feedback"
+
+
+async def test_unpin_without_a_global_type_is_rejected(client: AsyncClient):
+    """`hydra sync` derives scope FROM type, so a global row holding a project
+    type is unstable - the next Stop hook re-pins it to whatever project that
+    session is in. The server cannot guess user vs feedback, so it refuses."""
+    await _register_project(client, "alpha", "/tmp/alpha")
+    created = await _create_memory(
+        client, name="m", type="project", project_slug="alpha",
+    )
+
+    res = await client.put(f"/api/memory/{created['id']}", json={"project_slug": None})
+    assert res.status_code == 422
+
+    res = await client.get(f"/api/memory/{created['id']}")
+    assert res.json()["project_slug"] == "alpha"  # unchanged
+
+    # With a global type supplied, it works.
+    res = await client.put(
+        f"/api/memory/{created['id']}",
+        json={"project_slug": None, "type": "feedback"},
+    )
+    assert res.status_code == 200
+    assert res.json()["project_slug"] is None
+    assert res.json()["type"] == "feedback"
+
+
+async def test_global_memory_cannot_hold_a_project_type(client: AsyncClient):
+    res = await client.post("/api/memory", json={"name": "m", "type": "project"})
+    assert res.status_code == 422
+    res = await client.post("/api/memory", json={"name": "m", "type": "reference"})
+    assert res.status_code == 422
+
+
+async def test_update_rejects_explicit_null_on_other_fields(client: AsyncClient):
+    created = await _create_memory(client, name="m")
+    res = await client.put(f"/api/memory/{created['id']}", json={"name": None})
+    assert res.status_code == 422
+
+
+async def test_update_rename_onto_existing_name_returns_409(client: AsyncClient):
+    await _create_memory(client, name="first")
+    second = await _create_memory(client, name="second")
+
+    res = await client.put(f"/api/memory/{second['id']}", json={"name": "first"})
+    assert res.status_code == 409
+
+    res = await client.get("/api/memory")
+    assert sorted(m["name"] for m in res.json()) == ["first", "second"]
+
+
+async def test_consecutive_writes_produce_distinct_updated_at(client: AsyncClient):
+    """updated_at is the version token `hydra sync` uses to detect that a memory
+    changed on the server since a mirror file was written. Two writes to one row
+    must never collide, or a stale mirror silently reverts the newer one - which
+    a whole-second timestamp did, for any two writes inside the same second."""
+    created = await _create_memory(client, name="m", body="v1")
+
+    stamps = {created["updated_at"]}
+    for i in range(5):
+        res = await client.put(f"/api/memory/{created['id']}", json={"body": f"v{i}"})
+        assert res.status_code == 200
+        stamps.add(res.json()["updated_at"])
+
+    assert len(stamps) == 6, "updated_at collided across writes"
+
+
+async def test_upsert_unknown_project_slug_returns_400(client: AsyncClient):
+    res = await client.post(
+        "/api/memory",
+        json={"name": "m", "type": "project", "project_slug": "nope"},
+    )
+    assert res.status_code == 400
 
 
 # --- Filtered list ---

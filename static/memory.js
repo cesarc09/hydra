@@ -6,7 +6,7 @@ let claudeMdDraft = null;  // null when not editing; string when textarea has be
 let claudeMdStatus = "";  // inline saved/error message
 let expandedMemoryIds = new Set();
 let expandedProjectSlugs = new Set();
-let openAction = null;  // { memoryId, kind: "copy" | "move" | "distribute" } - at most one inline form open
+let openAction = null;  // { memoryId, kind: "reproject" | "move" | "distribute" } - at most one inline form open
 
 // --- Fetch ---
 
@@ -248,7 +248,7 @@ function renderMemoryRow(m, isGlobal) {
     const typeClass = memoryTypeBadge(m.type);
     const actions = [];
     if (!isGlobal) {
-        actions.push(`<span class="memory-action" onclick="startCopy(${m.id})">Copy</span>`);
+        actions.push(`<span class="memory-action" onclick="startMoveToProject(${m.id})">Move to project</span>`);
         actions.push(`<span class="memory-action" onclick="startMoveToGlobal(${m.id})">Move to Global</span>`);
     } else {
         actions.push(`<span class="memory-action" onclick="startDistribute(${m.id})">Move to projects</span>`);
@@ -284,18 +284,18 @@ function memoryTypeBadge(type) {
 
 function renderInlineForm(m) {
     if (!openAction || openAction.memoryId !== m.id) return "";
-    if (openAction.kind === "copy") {
+    if (openAction.kind === "reproject") {
         const others = projects.filter((p) => p.slug !== m.project_slug);
         if (others.length === 0) {
-            return `<div class="memory-inline-form">No other projects to copy to. <span class="memory-action" onclick="cancelAction()">Cancel</span></div>`;
+            return `<div class="memory-inline-form">No other projects to move to. <span class="memory-action" onclick="cancelAction()">Cancel</span></div>`;
         }
         const opts = others.map((p) => `<option value="${escAttr(p.slug)}">${escHtml(p.slug)}</option>`).join("");
         return `
             <div class="memory-inline-form">
-                <label>Copy to:
-                    <select id="copy-target-${m.id}">${opts}</select>
+                <label>Move to project:
+                    <select id="reproject-target-${m.id}">${opts}</select>
                 </label>
-                <span class="memory-action" onclick="confirmCopy(${m.id})">Confirm</span>
+                <span class="memory-action" onclick="confirmMoveToProject(${m.id})">Confirm</span>
                 <span class="memory-action" onclick="cancelAction()">Cancel</span>
             </div>
         `;
@@ -325,6 +325,7 @@ function renderInlineForm(m) {
         return `
             <div class="memory-inline-form memory-inline-form-distribute">
                 <div class="distribute-label">Move to projects:</div>
+                <div class="distribute-hint">One project moves it in place. Several splits it into per-project memories named <code>${escHtml(m.name)}-&lt;slug&gt;</code> - names are globally unique.</div>
                 <div class="distribute-checkboxes">${boxes}</div>
                 <div class="distribute-actions">
                     <span class="memory-action" onclick="confirmDistribute(${m.id})">Confirm</span>
@@ -411,8 +412,8 @@ function toggleProject(slug) {
 
 // --- Actions ---
 
-function startCopy(id) {
-    openAction = { memoryId: id, kind: "copy" };
+function startMoveToProject(id) {
+    openAction = { memoryId: id, kind: "reproject" };
     render();
 }
 
@@ -446,80 +447,38 @@ async function deleteMemory(id) {
     render();
 }
 
-async function confirmCopy(id) {
-    const m = memories.find((x) => x.id === id);
-    if (!m) return;
-    const sel = document.getElementById(`copy-target-${id}`);
-    const target = sel && sel.value;
-    if (!target) return;
-    const existing = memories.find((x) => x.name === m.name && x.project_slug === target);
-    if (existing && !confirm(`Overwrite existing memory '${m.name}' in project '${target}'?`)) return;
-    const payload = {
-        name: m.name,
-        description: m.description || "",
-        type: m.type,
-        body: m.body || "",
-        project_slug: target,
-    };
-    const res = await apiFetch(`${API}/memory`, {
-        method: "POST",
+// Re-scoping is a PUT, never create-then-delete. A new row means a new id, and
+// every mirror file still carrying the OLD id then looks server-deleted - which
+// is exactly how a "move" used to resurrect itself as a duplicate.
+async function rescopeMemory(id, projectSlug, extra = {}) {
+    const res = await apiFetch(`${API}/memory/${id}`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ project_slug: projectSlug, ...extra }),
     });
     if (!res.ok) {
-        alert(`Copy failed: HTTP ${res.status}`);
-        return;
+        alert(`Move failed: ${await errorDetail(res)}`);
+        return null;
     }
     const saved = await res.json();
-    // Replace existing or append
     const idx = memories.findIndex((x) => x.id === saved.id);
     if (idx >= 0) memories[idx] = saved; else memories.push(saved);
     openAction = null;
     render();
+    return saved;
+}
+
+async function confirmMoveToProject(id) {
+    const sel = document.getElementById(`reproject-target-${id}`);
+    const target = sel && sel.value;
+    if (!target) return;
+    await rescopeMemory(id, target);
 }
 
 async function confirmMove(id) {
-    const m = memories.find((x) => x.id === id);
-    if (!m) return;
     const sel = document.getElementById(`move-type-${id}`);
     const newType = (sel && sel.value) || "user";
-    const existing = memories.find((x) => x.name === m.name && x.project_slug == null);
-    if (existing && !confirm(`Overwrite existing global memory '${m.name}'?`)) return;
-    const payload = {
-        name: m.name,
-        description: m.description || "",
-        type: newType,
-        body: m.body || "",
-        project_slug: null,
-    };
-    const createRes = await apiFetch(`${API}/memory`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-    });
-    if (!createRes.ok) {
-        alert(`Move failed (create step): HTTP ${createRes.status}`);
-        return;
-    }
-    const saved = await createRes.json();
-
-    // Delete original only if the upsert didn't already replace it (can happen
-    // if somehow the IDs matched, defensive).
-    if (saved.id !== id) {
-        const delRes = await apiFetch(`${API}/memory/${id}`, { method: "DELETE" });
-        if (delRes.status !== 204) {
-            alert(`Move partially failed: created global copy, but DELETE of original returned HTTP ${delRes.status}. Resolve manually.`);
-            await refresh();
-            return;
-        }
-    }
-
-    memories = memories.filter((x) => x.id !== id);
-    const idx = memories.findIndex((x) => x.id === saved.id);
-    if (idx >= 0) memories[idx] = saved; else memories.push(saved);
-    openAction = null;
-    expandedMemoryIds.delete(id);
-    render();
+    await rescopeMemory(id, null, { type: newType });
 }
 
 async function confirmDistribute(id) {
@@ -531,36 +490,47 @@ async function confirmDistribute(id) {
         alert("Pick at least one project.");
         return;
     }
-    const collisions = targets.filter(
-        (t) => memories.some((x) => x.name === m.name && x.project_slug === t),
-    );
-    if (collisions.length > 0) {
-        const plural = collisions.length > 1 ? "s" : "";
-        const list = collisions.map((s) => `'${s}'`).join(", ");
-        if (!confirm(`Overwrite existing memory '${m.name}' in project${plural} ${list}?`)) return;
+    // A single target is a plain re-scope: same row, same id, same name.
+    if (targets.length === 1) {
+        await rescopeMemory(id, targets[0]);
+        expandedMemoryIds.delete(id);
+        return;
     }
+
+    // Several targets can't all keep one name (names are globally unique), so
+    // each lands as '<name>-<slug>' and the global original is deleted.
+    const named = targets.map((t) => ({ target: t, name: `${m.name}-${t}` }));
+    const clashes = named.filter((n) => memories.some(
+        (x) => x.name === n.name && x.project_slug !== n.target,
+    ));
+    if (clashes.length > 0) {
+        // Deliberately NOT sent with rescope:true - that would drag the existing
+        // memory out of the project it is pinned to. Let the server 409 instead.
+        alert(`Cannot split: ${clashes.map((n) => `'${n.name}'`).join(", ")} already exists elsewhere. Rename that memory first.`);
+        return;
+    }
+    if (!confirm(`Split '${m.name}' into ${named.map((n) => `'${n.name}'`).join(", ")} and delete the global original?`)) return;
     const payloadBase = {
-        name: m.name,
         description: m.description || "",
         type: m.type,
         body: m.body || "",
     };
-    const results = await Promise.all(targets.map(async (t) => {
+    const results = await Promise.all(named.map(async ({ target, name }) => {
         const res = await apiFetch(`${API}/memory`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ...payloadBase, project_slug: t }),
+            body: JSON.stringify({ ...payloadBase, name, project_slug: target }),
         });
         return {
-            target: t,
+            target,
             ok: res.ok,
-            status: res.status,
             saved: res.ok ? await res.json() : null,
+            detail: res.ok ? null : await errorDetail(res),
         };
     }));
     const failed = results.filter((r) => !r.ok);
     if (failed.length > 0) {
-        const msg = failed.map((f) => `${f.target} (HTTP ${f.status})`).join(", ");
+        const msg = failed.map((f) => `${f.target}: ${f.detail}`).join(", ");
         alert(`Move to projects partially failed: ${msg}. Global memory NOT deleted. Successful copies are saved; you may retry.`);
         await refresh();
         return;
@@ -582,6 +552,16 @@ async function confirmDistribute(id) {
 }
 
 // --- Helpers ---
+
+async function errorDetail(res) {
+    // Surface the server's message (the 409 explains WHY a name is refused);
+    // a bare status code leaves the user with nothing to act on.
+    try {
+        const body = await res.json();
+        if (body && body.detail) return `${body.detail} (HTTP ${res.status})`;
+    } catch { /* not JSON */ }
+    return `HTTP ${res.status}`;
+}
 
 function escAttr(s) {
     return String(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");

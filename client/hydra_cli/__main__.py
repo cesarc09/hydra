@@ -74,7 +74,7 @@ def cmd_memory_create(args: argparse.Namespace) -> None:
 
 
 def cmd_memory_update(args: argparse.Namespace) -> None:
-    payload: dict[str, str] = {}
+    payload: dict[str, object] = {}
     if args.name:
         payload["name"] = args.name
     if args.type:
@@ -84,6 +84,23 @@ def cmd_memory_update(args: argparse.Namespace) -> None:
     body_text = _read_body(args)
     if body_text:
         payload["body"] = body_text
+    # Re-scope in place. Without this, moving a memory between scopes meant
+    # delete + re-create, which mints a new id and leaves every mirror file
+    # pointing at the old one - the duplicate-memory bug.
+    if args.project:
+        payload["project_slug"] = args.project
+    elif args.make_global:
+        # A global memory needs a global type, and only the caller knows which -
+        # left as type=project it would be a global row that sync re-pins to
+        # whatever project the next session runs in.
+        if payload.get("type") not in ("user", "feedback"):
+            print(
+                "--global requires --type user|feedback (a global memory cannot"
+                " keep a project-scoped type)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        payload["project_slug"] = None
     if not payload:
         print("Nothing to update", file=sys.stderr)
         sys.exit(1)
@@ -354,6 +371,12 @@ def build_parser() -> argparse.ArgumentParser:
     mu.add_argument("--type", choices=["user", "feedback", "project", "reference"])
     mu.add_argument("--desc")
     mu.add_argument("--body-file")
+    scope = mu.add_mutually_exclusive_group()
+    scope.add_argument("--project", help="re-scope: pin this memory to a project slug")
+    scope.add_argument(
+        "--global", dest="make_global", action="store_true",
+        help="re-scope: unpin this memory to global",
+    )
 
     md = mem_sub.add_parser("delete")
     md.add_argument("id", type=int)

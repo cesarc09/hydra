@@ -118,7 +118,7 @@ Two pages, both behind the bearer token:
 - **`/memory` - Memory dashboard.** Browse the cross-machine memory store.
   - Global memories (`user` / `feedback`) listed separately from project-scoped memories, grouped per project with expandable rows.
   - Click a memory name to expand its body inline.
-  - Per memory: **Delete**, **Copy to another project** (with overwrite confirmation), **Move to global** (pick new `user` / `feedback` type). Read-only bodies - edits still go through `python -m hydra_cli sync`.
+  - Per memory: **Delete**, **Move to project**, **Move to global** (pick new `user` / `feedback` type), and **Move to projects** to split a global memory across several (each copy is named `<name>-<slug>`, since names are globally unique). Re-scoping happens in place, so a memory keeps its id and its mirror files stay valid. Read-only bodies - edits still go through `python -m hydra_cli sync`.
   - Stats header: project count and memory count, split global vs project-scoped.
 
 ## Session State Machine
@@ -148,7 +148,7 @@ All three must pass before committing.
 | Component | Choice |
 |-----------|--------|
 | Server | Python 3.13, FastAPI, aiosqlite |
-| Database | SQLite (WAL mode, partial unique indexes for memory scoping) |
+| Database | SQLite (WAL mode, globally-unique memory names) |
 | Live updates | Server-Sent Events |
 | Frontend | Vanilla HTML/JS, Pico CSS (no build step) |
 | Auth | Bearer token (fail-closed) |

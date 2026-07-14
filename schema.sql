@@ -73,11 +73,20 @@ CREATE TABLE IF NOT EXISTS project_paths (
 CREATE INDEX IF NOT EXISTS idx_project_paths_path ON project_paths(path);
 
 -- Cross-machine memory store. project_slug NULL => global; otherwise pinned
--- to a project. Partial unique indexes enforce that global names are unique
--- and (name, project_slug) pairs are unique within a project.
+-- to a project. Names are globally unique, scope-independent: one name = one
+-- memory. Legacy DBs used two partial unique indexes instead, which let a
+-- global row and a pinned row share a name - that is what let a stale mirror
+-- file re-insert a deleted memory as a second row (the duplicate-memory bug).
+--
+-- The UNIQUE lives inline on the column rather than as a CREATE UNIQUE INDEX
+-- below because db.get_db() runs this script BEFORE db._migrate(): a bare
+-- CREATE UNIQUE INDEX would abort startup on a legacy DB that still holds
+-- duplicates. Fresh DBs (and tests/conftest.py, which only runs this file) get
+-- uniqueness from here; db._ensure_unique_memory_names() collapses duplicates
+-- and installs idx_memories_name on pre-existing DBs.
 CREATE TABLE IF NOT EXISTS memories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
+    name TEXT NOT NULL UNIQUE,
     description TEXT NOT NULL DEFAULT '',
     type TEXT NOT NULL CHECK (type IN ('user', 'feedback', 'project', 'reference')),
     body TEXT NOT NULL DEFAULT '',
@@ -85,8 +94,3 @@ CREATE TABLE IF NOT EXISTS memories (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_global
-    ON memories(name) WHERE project_slug IS NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_project
-    ON memories(name, project_slug) WHERE project_slug IS NOT NULL;

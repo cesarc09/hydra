@@ -1,3 +1,4 @@
+import sqlite3
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,24 +13,46 @@ router = APIRouter(
 
 
 def _now() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat()
+    """Timestamp for created_at/updated_at.
+
+    Keeps microseconds, unlike the rest of the API. `updated_at` is the version
+    token `hydra sync` uses to decide whether a memory changed on the server
+    since a mirror file was written - so two writes to one row MUST produce two
+    different values. Truncated to whole seconds, a re-scope landing in the same
+    second as the mirror's recorded version is invisible, and the stale mirror
+    silently reverts it on the next push.
+    """
+    return datetime.now(UTC).isoformat()
 
 
 GLOBAL_TYPES = frozenset({"user", "feedback"})
+PROJECT_TYPES = frozenset({"project", "reference"})
 
 
 def _type_for_scope(mem_type: str, project_slug: str | None) -> str:
-    """Keep a memory's type consistent with its scope.
+    """Keep a memory's type consistent with its scope, in BOTH directions.
 
-    A pinned memory (project_slug set) must use a project-scoped type, so a
-    global type (user/feedback) is coerced to 'project'. Global memories keep
-    their type - we can't infer user vs feedback. This makes the dashboard's
-    "Move/Copy to project" auto-scope the type, and stops a pinned-but-global
-    row that `hydra sync` (which derives scope from type) would re-globalize
-    into a duplicate. `reference` is already project-scoped and passes through.
+    `hydra sync` derives a memory's scope from its type, so a row whose type and
+    scope disagree is unstable: the next Stop-hook push "corrects" it back, and
+    the human's intent is lost. Hence:
+
+    - Pinned (project_slug set) + a global type -> coerced to 'project'. This is
+      what auto-scopes the dashboard's Move-to-project.
+    - Global (project_slug NULL) + a project-scoped type -> rejected (422). We
+      cannot coerce this direction, because there is no way to guess user vs
+      feedback - the caller has to say. Silently leaving it would produce a
+      global row that sync re-pins to whatever project the next session runs in.
     """
     if project_slug is not None and mem_type in GLOBAL_TYPES:
         return "project"
+    if project_slug is None and mem_type in PROJECT_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"A global memory cannot have type '{mem_type}'; pass a global"
+                " type (user or feedback), or pin it to a project."
+            ),
+        )
     return mem_type
 
 
@@ -73,40 +96,52 @@ async def get_memory(memory_id: int) -> MemoryItem:
 
 @router.post("")
 async def upsert_memory(memory: MemoryCreate) -> MemoryItem:
-    """Upsert on (name, project_slug). Global memories (project_slug IS NULL)
-    are unique by name; project-pinned memories are unique within their project.
+    """Upsert on name. Names are globally unique: one name = one memory,
+    whatever its scope.
+
+    A POST that would move an existing memory to a different scope is refused
+    with 409 unless `rescope` is set. Sync pushes by name when a mirror file has
+    no id, and a by-name push must never be able to silently unpin a memory
+    someone deliberately scoped to a project.
     """
     db = await get_db()
     now = _now()
     mem_type = _type_for_scope(memory.type, memory.project_slug)
-    # SQLite's ON CONFLICT requires naming the conflict target. Partial unique
-    # indexes are valid targets; we use WHERE to pick the right one at runtime.
-    if memory.project_slug is None:
-        sql = (
-            "INSERT INTO memories (name, description, type, body, project_slug,"
-            " created_at, updated_at) VALUES (?, ?, ?, ?, NULL, ?, ?)"
-            " ON CONFLICT(name) WHERE project_slug IS NULL DO UPDATE SET"
-            " description=excluded.description, type=excluded.type,"
-            " body=excluded.body, updated_at=excluded.updated_at"
-            " RETURNING *"
+
+    rows = list(await db.execute_fetchall(
+        "SELECT id, project_slug FROM memories WHERE name = ?", (memory.name,)
+    ))
+    if rows and rows[0]["project_slug"] != memory.project_slug and not memory.rescope:
+        held_by = rows[0]["project_slug"] or "global"
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Memory '{memory.name}' already exists in scope '{held_by}';"
+                " memory names are globally unique. Rename it, or pass"
+                " rescope=true to move the existing memory to this scope."
+            ),
         )
-        params = (memory.name, memory.description, mem_type, memory.body, now, now)
-    else:
-        sql = (
-            "INSERT INTO memories (name, description, type, body, project_slug,"
-            " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-            " ON CONFLICT(name, project_slug) WHERE project_slug IS NOT NULL"
-            " DO UPDATE SET description=excluded.description, type=excluded.type,"
-            " body=excluded.body, updated_at=excluded.updated_at"
-            " RETURNING *"
-        )
-        params = (
-            memory.name, memory.description, mem_type, memory.body,
-            memory.project_slug, now, now,
-        )
-    rows = list(await db.execute_fetchall(sql, params))
+
+    sql = (
+        "INSERT INTO memories (name, description, type, body, project_slug,"
+        " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        " ON CONFLICT(name) DO UPDATE SET description=excluded.description,"
+        " type=excluded.type, body=excluded.body,"
+        " project_slug=excluded.project_slug, updated_at=excluded.updated_at"
+        " RETURNING *"
+    )
+    params = (
+        memory.name, memory.description, mem_type, memory.body,
+        memory.project_slug, now, now,
+    )
+    try:
+        result = list(await db.execute_fetchall(sql, params))
+    except sqlite3.IntegrityError as e:
+        raise HTTPException(
+            status_code=400, detail=f"Cannot save memory: {e}"
+        ) from e
     await db.commit()
-    return MemoryItem(**dict(rows[0]))
+    return MemoryItem(**dict(result[0]))
 
 
 @router.put("/{memory_id}")
@@ -120,9 +155,15 @@ async def update_memory(memory_id: int, update: MemoryUpdate) -> MemoryItem:
 
     current = dict(rows[0])
     now = _now()
-    fields = {k: v for k, v in update.model_dump().items() if v is not None}
+    # exclude_unset, not "drop the Nones": an explicit {"project_slug": null}
+    # must be able to unpin a memory to global scope, which is how a re-scope
+    # travels without deleting and re-creating the row (and minting a new id).
+    fields = update.model_dump(exclude_unset=True)
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
+    for key, value in fields.items():
+        if value is None and key != "project_slug":
+            raise HTTPException(status_code=422, detail=f"'{key}' cannot be null")
 
     # Keep type consistent with scope when either is changing (e.g. pinning a
     # global memory to a project via PUT without sending a new type).
@@ -135,11 +176,21 @@ async def update_memory(memory_id: int, update: MemoryUpdate) -> MemoryItem:
     fields["updated_at"] = now
     set_clause = ", ".join(f"{k} = ?" for k in fields)
     values = [*fields.values(), memory_id]
-    await db.execute(f"UPDATE memories SET {set_clause} WHERE id = ?", values)
+    try:
+        await db.execute(f"UPDATE memories SET {set_clause} WHERE id = ?", values)
+    except sqlite3.IntegrityError as e:
+        if "UNIQUE" in str(e):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Another memory is already named '{fields.get('name')}'",
+            ) from e
+        raise HTTPException(status_code=400, detail=f"Cannot update memory: {e}") from e
     await db.commit()
 
-    current.update(fields)
-    return MemoryItem(**current)
+    updated = list(await db.execute_fetchall(
+        "SELECT * FROM memories WHERE id = ?", (memory_id,)
+    ))
+    return MemoryItem(**dict(updated[0]))
 
 
 @router.delete("/{memory_id}", status_code=204)

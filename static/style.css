@@ -422,6 +422,11 @@ a.file-link:hover {
     color: #a89a84;
     font-size: 0.85em;
 }
+.distribute-hint {
+    color: #7d7263;
+    font-size: 0.78em;
+    max-width: 46rem;
+}
 .distribute-checkboxes {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
