@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 MemoryType = Literal["user", "feedback", "project", "reference"]
+HookRuntime = Literal["python", "bash"]
 
 
 class HookEvent(BaseModel):
@@ -95,6 +96,30 @@ class MemoryItem(BaseModel):
     project_slug: str | None = None
     created_at: str
     updated_at: str
+
+
+# --- Distributed hooks ---
+
+
+class HookUpsert(BaseModel):
+    """Body for PUT /api/config/hooks/{name}: a policy hook's script and its
+    settings.json wiring, upserted together.
+
+    `event` is not validated against a fixed list - Claude Code adds hook events
+    often enough that an allowlist here would reject valid config until the
+    server is redeployed. `matcher` is None when the hook should apply to every
+    invocation of its event; the client then emits no `matcher` key at all.
+    `instances` is None for "every machine", or a list of HYDRA_INSTANCE_ID
+    values to restrict it to; the CLIENT filters on it, so this endpoint keeps
+    returning the whole fleet's config to any machine that asks.
+    """
+    content: str = Field(min_length=1)
+    runtime: HookRuntime = "python"
+    event: str = Field(min_length=1, max_length=64, pattern=r"^\S+$")
+    matcher: str | None = Field(default=None, max_length=256)
+    timeout: int = Field(default=10, ge=1, le=600)
+    enabled: bool = True
+    instances: list[str] | None = None
 
 
 # --- Projects ---

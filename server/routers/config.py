@@ -1,3 +1,4 @@
+import json
 import re
 from datetime import UTC, datetime
 
@@ -5,13 +6,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from server.auth import require_auth
 from server.db import get_db
+from server.models import HookUpsert
 
 router = APIRouter(prefix="/api/config", tags=["config"], dependencies=[Depends(require_auth)])
 
-# A command name maps 1:1 to a filename (<name>.md -> /<name>) on the client, so
-# restrict it to a filesystem- and command-safe charset: no path separators, no
-# leading dot, nothing that could escape ~/.claude/commands or rename a command.
-_COMMAND_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+# A command or hook name maps 1:1 to a filename (<name>.md -> /<name>, or
+# <name>.py) on the client, so restrict it to a filesystem- and command-safe
+# charset: no path separators, no leading dot, nothing that could escape
+# ~/.claude/commands or ~/.claude/hooks, or rename a command.
+_CONFIG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
 
 @router.get("/claude-md")
@@ -62,7 +65,7 @@ async def get_command(name: str):
 
 @router.put("/commands/{name}")
 async def put_command(name: str, request: Request):
-    if not _COMMAND_NAME_RE.match(name):
+    if not _CONFIG_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid command name")
     content = (await request.body()).decode("utf-8")
     if not content.strip():
@@ -84,4 +87,95 @@ async def delete_command(name: str):
     cursor = await db.execute("DELETE FROM config_commands WHERE name = ?", (name,))
     if cursor.rowcount == 0:
         raise HTTPException(status_code=404, detail="Command not found")
+    await db.commit()
+
+
+def _hook_row_to_dict(row) -> dict:
+    """Shape a config_hooks row for the wire. `instances` is stored as a JSON
+    array; a row hand-edited into invalid JSON degrades to None (= every
+    machine) rather than breaking the whole pull for one bad row."""
+    try:
+        instances = json.loads(row[6]) if row[6] else None
+    except json.JSONDecodeError:
+        instances = None
+    return {
+        "content": row[0],
+        "runtime": row[1],
+        "event": row[2],
+        "matcher": row[3],
+        "timeout": row[4],
+        "enabled": bool(row[5]),
+        "instances": instances,
+    }
+
+
+_HOOK_COLUMNS = "content, runtime, event, matcher, timeout, enabled, instances"
+
+
+@router.get("/hooks")
+async def list_hooks() -> dict[str, dict]:
+    """Return every distributed hook as a {name: spec} map, script body included.
+    One round trip, no manifest - same trade as /commands.
+
+    ORDER BY name so two hooks on the same event always render into
+    settings.json in the same order. SQLite makes no ordering promise without
+    it, and an unstable order would rewrite the file on every pull.
+    """
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        f"SELECT name, {_HOOK_COLUMNS} FROM config_hooks ORDER BY name"
+    )
+    return {row[0]: _hook_row_to_dict(row[1:]) for row in rows}
+
+
+@router.get("/hooks/{name}")
+async def get_hook(name: str):
+    db = await get_db()
+    rows = list(
+        await db.execute_fetchall(
+            "SELECT content FROM config_hooks WHERE name = ?", (name,)
+        )
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Hook not found")
+    return Response(content=rows[0][0], media_type="text/plain")
+
+
+@router.put("/hooks/{name}")
+async def put_hook(name: str, hook: HookUpsert):
+    if not _CONFIG_NAME_RE.match(name):
+        raise HTTPException(status_code=400, detail="Invalid hook name")
+    if not hook.content.strip():
+        raise HTTPException(status_code=400, detail="Hook content cannot be empty")
+    instances = json.dumps(hook.instances) if hook.instances is not None else None
+    now = datetime.now(UTC).replace(microsecond=0).isoformat()
+    values = (
+        hook.content,
+        hook.runtime,
+        hook.event,
+        hook.matcher,
+        hook.timeout,
+        int(hook.enabled),
+        instances,
+        now,
+    )
+    db = await get_db()
+    await db.execute(
+        f"""INSERT INTO config_hooks (name, {_HOOK_COLUMNS}, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET
+                content = ?, runtime = ?, event = ?, matcher = ?, timeout = ?,
+                enabled = ?, instances = ?, updated_at = ?""",
+        (name, *values, *values),
+    )
+    await db.commit()
+    return {"status": "ok", "updated_at": now}
+
+
+@router.delete("/hooks/{name}", status_code=204)
+async def delete_hook(name: str):
+    db = await get_db()
+    cursor = await db.execute("DELETE FROM config_hooks WHERE name = ?", (name,))
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Hook not found")
     await db.commit()

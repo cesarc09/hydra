@@ -45,6 +45,25 @@ CREATE TABLE IF NOT EXISTS config_commands (
     updated_at TEXT NOT NULL
 );
 
+-- Server-distributed policy hooks. One row per hook, carrying BOTH the script
+-- body and its settings.json wiring - they must never travel separately, because
+-- `python3 <missing>.py` exits 2 and exit 2 on PreToolUse is the *blocking* code,
+-- so wiring that outruns its script turns a fail-open guard into a hard deny on
+-- every tool call. Clients write content to ~/.claude/hooks/<name>.<ext> and
+-- render the wiring into ~/.claude/settings.json via apply-settings.
+CREATE TABLE IF NOT EXISTS config_hooks (
+    name       TEXT PRIMARY KEY,
+    content    TEXT NOT NULL,
+    runtime    TEXT NOT NULL,          -- 'python' | 'bash': interpreter + file suffix
+    event      TEXT NOT NULL,          -- Claude Code hook event, e.g. PreToolUse
+    matcher    TEXT,                   -- NULL = emit no matcher key
+    timeout    INTEGER NOT NULL,
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    instances  TEXT,                   -- NULL = every machine; else a JSON array
+                                       -- of HYDRA_INSTANCE_ID values
+    updated_at TEXT NOT NULL
+);
+
 -- Project registry. Paths live in project_paths so the same project can
 -- exist at different filesystem paths on different machines.
 CREATE TABLE IF NOT EXISTS projects (

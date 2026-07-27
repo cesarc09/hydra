@@ -33,7 +33,7 @@ Hydra is one server that solves both. A memory store and CLAUDE.md that travel w
 
 Two loops run continuously:
 
-**Context loop** - `python -m hydra_cli sync` reconciles each machine's local memory dir (`~/.claude/projects/<dir>/memory/`) with the server. A SessionStart hook runs `python -m hydra_cli sync --pull` before Claude sees the session; a Stop hook runs `python -m hydra_cli sync --push` at turn end. Memories are typed: `user`/`feedback` are global (available everywhere), `project`/`reference` are pinned to the project the cwd maps to. Unregistered cwds auto-register via the server (with a stoplist for `~`, `~/Downloads`, `/tmp`, etc.) and surface in the dashboard's **Pending review** section for confirmation or deletion.
+**Context loop** - `python -m hydra_cli sync` reconciles each machine's local memory dir (`~/.claude/projects/<dir>/memory/`) with the server. A SessionStart hook runs `python -m hydra_cli sync --pull` before Claude sees the session; a Stop hook runs `python -m hydra_cli sync --push` at turn end. Memories are typed: `user`/`feedback` are global (available everywhere), `project`/`reference` are pinned to the project the cwd maps to. Unregistered cwds auto-register via the server (with a stoplist for `~`, `~/Downloads`, `/tmp`, etc.) and surface in the dashboard's **Pending review** section for confirmation or deletion. The same SessionStart pass pulls server-distributed slash commands into `~/.claude/commands/` and policy hooks into `~/.claude/hooks/`, so a command or hook published once reaches every machine.
 
 **Observation loop** - every Claude Code tool call fires an HTTP hook to `/api/hooks/event`. The server tracks session state transitions (active / idle / waiting_input / ended) and broadcasts them over Server-Sent Events to any open dashboard.
 
@@ -104,9 +104,21 @@ python -m hydra_cli sync [--pull|--push|--dry-run] [--cwd PATH]
 python -m hydra_cli memory list | get ID | create ... | update ID ... | delete ID
 python -m hydra_cli project list | get SLUG | create --slug --path | update SLUG | delete
 python -m hydra_cli config get-claude-md | put-claude-md FILE
+python -m hydra_cli commands pull | put NAME FILE | get NAME | list | delete NAME
+                      # Slash commands. `pull` is the SessionStart hook; the
+                      # rest manage what the server distributes.
+python -m hydra_cli hooks pull | get NAME | list | delete NAME
+python -m hydra_cli hooks put NAME FILE --event EVENT [--matcher M]
+                      [--runtime python|bash] [--timeout N] [--instances a,b]
+                      [--disabled]
+                      # Policy hooks. Each row carries the script AND its
+                      # settings.json wiring; `pull` installs both and is run
+                      # by setup.sh just before the settings render.
 ```
 
 Global auth via `HYDRA_AUTH_TOKEN` and `HYDRA_URL` env vars.
+
+Set `HYDRA_POLICY_HOOKS_DISABLE=1` on a machine to stop applying server-distributed policy hooks there. It empties only that layer - telemetry and memory sync keep working. (Claude Code's own `disableAllHooks` is the switch for "nothing may run at all".)
 
 ## Dashboard
 

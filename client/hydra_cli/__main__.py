@@ -10,6 +10,7 @@ import sys
 from hydra_cli import api
 from hydra_cli.apply_settings import cmd_apply_settings
 from hydra_cli.commands import run_pull
+from hydra_cli.hooks import run_pull as run_hooks_pull
 from hydra_cli.remote import cmd_capture_remote_url
 from hydra_cli.sync import cmd_sync
 
@@ -239,6 +240,60 @@ def cmd_commands_delete(args: argparse.Namespace) -> None:
         _die(status, body)
 
 
+# --- hooks (server-distributed policy hooks) ---
+
+
+def cmd_hooks_pull(args: argparse.Namespace) -> None:
+    sys.exit(run_hooks_pull())
+
+
+def cmd_hooks_put(args: argparse.Namespace) -> None:
+    with open(args.file, encoding="utf-8") as f:
+        content = f.read()
+    payload: dict[str, object] = {
+        "content": content,
+        "runtime": args.runtime,
+        "event": args.event,
+        "timeout": args.timeout,
+        "enabled": not args.disabled,
+    }
+    if args.matcher:
+        payload["matcher"] = args.matcher
+    if args.instances:
+        payload["instances"] = [s.strip() for s in args.instances.split(",") if s.strip()]
+    status, body = api.put_json(f"/api/config/hooks/{args.name}", payload)
+    if status != 200:
+        _die(status, body)
+    _print_json(json.loads(body))
+
+
+def cmd_hooks_get(args: argparse.Namespace) -> None:
+    status, body = api.get(f"/api/config/hooks/{args.name}")
+    if status != 200:
+        _die(status, body)
+    print(body, end="")
+
+
+def cmd_hooks_list(args: argparse.Namespace) -> None:
+    status, body = api.get("/api/config/hooks")
+    if status != 200:
+        _die(status, body)
+    for name, spec in sorted(json.loads(body).items()):
+        flags = [] if spec.get("enabled", True) else ["disabled"]
+        if spec.get("matcher"):
+            flags.append(f"matcher={spec['matcher']}")
+        if spec.get("instances"):
+            flags.append(f"instances={','.join(spec['instances'])}")
+        suffix = f"  [{', '.join(flags)}]" if flags else ""
+        print(f"{name}\t{spec.get('event', '?')}\t{spec.get('runtime', '?')}{suffix}")
+
+
+def cmd_hooks_delete(args: argparse.Namespace) -> None:
+    status, body = api.delete(f"/api/config/hooks/{args.name}")
+    if status != 204:
+        _die(status, body)
+
+
 # --- doctor (instance health + stats + anomaly checks) ---
 
 
@@ -437,6 +492,30 @@ def build_parser() -> argparse.ArgumentParser:
     cdel = cmds_sub.add_parser("delete")
     cdel.add_argument("name")
 
+    # --- hooks (server-distributed policy hooks) ---
+    hks = sub.add_parser("hooks", help="server-distributed policy hooks")
+    hks_sub = hks.add_subparsers(dest="command")
+
+    hks_sub.add_parser("pull", help="hook: write server hooks into ~/.claude/hooks")
+
+    hput = hks_sub.add_parser("put", help="publish a hook script from a file")
+    hput.add_argument("name")
+    hput.add_argument("file")
+    hput.add_argument("--event", required=True, help="e.g. PreToolUse, SubagentStart")
+    hput.add_argument("--matcher", help="tool/event matcher; omit to match all")
+    hput.add_argument("--runtime", choices=["python", "bash"], default="python")
+    hput.add_argument("--timeout", type=int, default=10)
+    hput.add_argument("--instances", help="comma-separated HYDRA_INSTANCE_IDs; omit for all")
+    hput.add_argument("--disabled", action="store_true", help="store but do not distribute")
+
+    hget = hks_sub.add_parser("get")
+    hget.add_argument("name")
+
+    hks_sub.add_parser("list")
+
+    hdel = hks_sub.add_parser("delete")
+    hdel.add_argument("name")
+
     # --- sync (no subcommand; flags drive direction) ---
     sync = sub.add_parser("sync", help="reconcile memories between local dir and hydra")
     sync.add_argument("--pull", action="store_true", help="download only")
@@ -461,6 +540,10 @@ def build_parser() -> argparse.ArgumentParser:
     aps.add_argument("--hydra-template", required=True)
     aps.add_argument("--user-template", required=True)
     aps.add_argument("--user-file", required=True)
+    aps.add_argument(
+        "--hooks-layer",
+        help="generated server-hooks layer (settings.hooks.json); missing = none",
+    )
     aps.add_argument("--output", required=True)
     aps.add_argument("--hydra-url", required=True)
     aps.add_argument("--hydra-repo-path", required=True)
@@ -487,6 +570,11 @@ DISPATCH = {
     ("commands", "get"): cmd_commands_get,
     ("commands", "list"): cmd_commands_list,
     ("commands", "delete"): cmd_commands_delete,
+    ("hooks", "pull"): cmd_hooks_pull,
+    ("hooks", "put"): cmd_hooks_put,
+    ("hooks", "get"): cmd_hooks_get,
+    ("hooks", "list"): cmd_hooks_list,
+    ("hooks", "delete"): cmd_hooks_delete,
     ("sync", None): cmd_sync,
     ("doctor", None): cmd_doctor,
     ("capture-remote-url", None): cmd_capture_remote_url,

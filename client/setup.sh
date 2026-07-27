@@ -47,10 +47,17 @@ if [ -f "$TARGET" ] && [ ! -L "$TARGET" ]; then
     cp "$TARGET" "$TARGET.bak"
 fi
 
+# Pull server-distributed policy hooks BEFORE rendering, so their wiring layer
+# is fresh when the merge below reads it. Keeping the render in one place means
+# `hooks pull` never has to re-enter apply-settings itself. Soft-fails: an
+# unreachable server leaves the previous layer in place.
+python -m hydra_cli hooks pull || true
+
 python -m hydra_cli apply-settings \
     --hydra-template "$SCRIPT_DIR/settings.json" \
     --user-template "$SCRIPT_DIR/settings.user.template.json" \
     --user-file "$USER_FILE" \
+    --hooks-layer "$CLAUDE_DIR/settings.hooks.json" \
     --output "$TARGET" \
     --hydra-url "$HYDRA_URL" \
     --hydra-repo-path "$HYDRA_REPO_PATH"
