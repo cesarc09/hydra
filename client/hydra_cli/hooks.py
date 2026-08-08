@@ -7,7 +7,7 @@ setup.sh, which runs this pull immediately before the render so one renderer
 stays in charge.
 
 The load-bearing invariant is in `run_pull`: wiring is emitted ONLY for a hook
-whose script is on disk afterwards. `python3 <missing>.py` exits 2, and exit 2
+whose script is on disk afterwards. `python <missing>.py` exits 2, and exit 2
 on PreToolUse is the *blocking* code, so wiring that outruns its script would
 turn a fail-open guard into a hard deny of every tool call on that machine.
 """
@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -40,7 +41,10 @@ _DISABLE_ENV = "HYDRA_POLICY_HOOKS_DISABLE"
 
 _RUNTIMES: dict[str, tuple[str, str]] = {
     # runtime -> (file suffix, interpreter)
-    "python": (".py", "python3"),
+    # `python`, never `python3`: Git Bash on Windows has no python3 on PATH, so
+    # that wiring installed all four policy hooks there and ran none of them.
+    # Bare name, not sys.executable - an absolute path churns the layer.
+    "python": (".py", "python"),
     "bash": (".sh", "bash"),
 }
 
@@ -128,6 +132,7 @@ def run_pull() -> int:
 
     written: set[str] = set()
     retained: set[str] = set()
+    wired_runtimes: set[str] = set()
     wiring: dict[str, list[dict[str, Any]]] = {}
 
     for name, spec in served.items():
@@ -189,6 +194,7 @@ def run_pull() -> int:
             group["matcher"] = matcher
         group["hooks"] = [entry]
         wiring.setdefault(event, []).append(group)
+        wired_runtimes.add(runtime)
 
     previously = _load_managed()
     pruned: set[str] = set()
@@ -210,6 +216,17 @@ def run_pull() -> int:
             "local script(s) - nothing pruned",
             file=sys.stderr,
         )
+
+    # A missing interpreter is invisible otherwise - scripts install, wiring
+    # renders, nothing runs. Still wired: it exits 127, not the blocking 2.
+    for runtime in sorted(wired_runtimes):
+        interpreter = _RUNTIMES[runtime][1]
+        if shutil.which(interpreter) is None:
+            print(
+                f"  hooks pull: WARNING - {interpreter!r} is not on PATH here, "
+                f"so the {runtime} hooks are wired but will not run",
+                file=sys.stderr,
+            )
 
     _write_wiring(wiring)
     wired = sum(len(groups) for groups in wiring.values())

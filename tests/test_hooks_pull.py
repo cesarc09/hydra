@@ -2,7 +2,7 @@
 
 Exercises run_pull with a fake api.get and a tmp hooks dir (no live server).
 The invariant most of these guard is "wire only what is on disk": wiring for a
-script that never landed would hard-deny every tool call, because python3 on a
+script that never landed would hard-deny every tool call, because python on a
 missing file exits 2 and PreToolUse reads exit 2 as "block".
 """
 
@@ -77,7 +77,7 @@ def test_pull_writes_script_and_wiring(pull_env):
                 "hooks": [
                     {
                         "type": "command",
-                        "command": 'python3 "$HOME/.claude/hooks/guard.py"',
+                        "command": 'python "$HOME/.claude/hooks/guard.py"',
                         "timeout": 10,
                     }
                 ],
@@ -85,6 +85,19 @@ def test_pull_writes_script_and_wiring(pull_env):
         ]
     }
     assert state(hdir) == {"managed": ["guard.py"]}
+
+
+def test_pull_warns_when_the_interpreter_is_missing(
+    pull_env, monkeypatch: pytest.MonkeyPatch, capsys
+):
+    """The Windows shape: scripts install, wiring renders, nothing runs. Wire it
+    anyway - that exits 127, not the blocking 2 - but do not go silent."""
+    fake, hdir = pull_env
+    fake.served = {"guard": spec()}
+    monkeypatch.setattr(hooks_mod.shutil, "which", lambda _name: None)
+    assert hooks_mod.run_pull() == 0
+    assert "'python' is not on PATH" in capsys.readouterr().err
+    assert wiring(hdir)["PreToolUse"]
 
 
 def test_pull_script_is_executable(pull_env):
@@ -247,6 +260,6 @@ def test_pull_multiple_hooks_same_event_are_ordered_by_server(pull_env):
     hooks_mod.run_pull()
     commands = [g["hooks"][0]["command"] for g in wiring(hdir)["PreToolUse"]]
     assert commands == [
-        'python3 "$HOME/.claude/hooks/a-guard.py"',
-        'python3 "$HOME/.claude/hooks/b-guard.py"',
+        'python "$HOME/.claude/hooks/a-guard.py"',
+        'python "$HOME/.claude/hooks/b-guard.py"',
     ]
