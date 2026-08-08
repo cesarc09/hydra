@@ -101,7 +101,10 @@ python -m hydra_cli sync [--pull|--push|--dry-run] [--cwd PATH]
                       # Reconcile local memory dir with server. Bidirectional
                       # by default; flags restrict direction. Conflicts are
                       # flagged, not merged.
-python -m hydra_cli memory list | get ID | create ... | update ID ... | delete ID
+python -m hydra_cli memory list [--all|--project SLUG|--global] [--json]
+                      # Defaults to this project + globals, one index line each.
+                      # --json returns full rows with bodies.
+python -m hydra_cli memory get ID | create ... | update ID ... | delete ID
 python -m hydra_cli project list | get SLUG | create --slug --path | update SLUG | delete
 python -m hydra_cli config get-claude-md | put-claude-md FILE
 python -m hydra_cli commands pull | put NAME FILE | get NAME | list | delete NAME

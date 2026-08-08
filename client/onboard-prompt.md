@@ -36,7 +36,7 @@ Onboard this machine as a Hydra client. Hydra is a cross-machine control plane f
 
    Upserts are by `(name, project_slug)`, so re-runs are safe. Report per-project counts.
 
-6. Verify convergence on one project: `cd <project-path> && python -m hydra_cli sync` (bidirectional) should report `0 pushed, 0 pulled, 0 conflicts` - that's the real idempotency check. (`--pull` is an unconditional overwrite, so it always reports `pulled = <server count>`, which isn't what we want for verification.) Then `python -m hydra_cli memory list` should show the full set.
+6. Verify convergence on one project: `cd <project-path> && python -m hydra_cli sync` (bidirectional) should report `0 pushed, 0 pulled, 0 conflicts` - that's the real idempotency check. (`--pull` is an unconditional overwrite, so it always reports `pulled = <server count>`, which isn't what we want for verification.) Then `python -m hydra_cli memory list --all` should show the full set (bare `list` is scoped to the current project plus globals).
 
 7. Recommend (don't force) enabling Claude Code's "Enable Remote Control for all sessions" toggle via the `/config` slash command. This auto-enables Remote Control per session so each session is reachable from the Claude mobile app. On terminal (`claude` CLI) sessions Hydra's Stop hook auto-captures the `https://claude.ai/code/session_...` URL from the transcript; in VS Code, the extension doesn't write the URL to the transcript so it has to be pasted once per session into the dashboard's session card field. Either way the card's "Open Remote Control" button deep-links to that specific session from anywhere.
 

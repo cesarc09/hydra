@@ -104,7 +104,7 @@ Scope is derived from memory type: `user`/`feedback` → global; `project`/`refe
 ## 6. Verify
 
 ```bash
-python -m hydra_cli memory list | head
+python -m hydra_cli memory list --all | head
 ```
 
 Start a fresh Claude Code session inside a registered project. Within a second it should appear on the dashboard, and `~/.claude/projects/<dir>/memory/` should contain pulled memories.

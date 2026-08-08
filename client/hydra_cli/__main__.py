@@ -12,7 +12,7 @@ from hydra_cli.apply_settings import cmd_apply_settings
 from hydra_cli.commands import run_pull
 from hydra_cli.hooks import run_pull as run_hooks_pull
 from hydra_cli.remote import cmd_capture_remote_url
-from hydra_cli.sync import cmd_sync
+from hydra_cli.sync import cmd_sync, fetch_server_memories, resolve_project_slug
 
 
 def _die(status: int, body: str) -> None:
@@ -42,11 +42,62 @@ def _read_body(args: argparse.Namespace) -> str:
 # --- memory commands ---
 
 
-def cmd_memory_list(args: argparse.Namespace) -> None:
+def _brief_line(mem: dict[str, object]) -> str:
+    scope = mem.get("project_slug") or "GLOBAL"
+    return (
+        f"{mem['id']} {mem['type']} {scope}"
+        f" - {mem['name']} - {mem.get('description') or ''}"
+    )
+
+
+def _fetch_all_memories() -> list[dict[str, object]]:
     status, body = api.get("/api/memory")
     if status != 200:
         _die(status, body)
-    _print_json(json.loads(body))
+    return json.loads(body)
+
+
+def cmd_memory_list(args: argparse.Namespace) -> None:
+    """List memories - this project's plus globals, as an index, by default.
+
+    Bodies are ~80% of the payload (the whole corpus is ~500 KB), and callers
+    that only need to find a memory need the index, not the text - so brief is
+    the default and --json opts back in to the full rows.
+    """
+    try:
+        if args.all_scopes:
+            memories = _fetch_all_memories()
+            scope_label = "all scopes"
+        elif args.globals_only:
+            memories = [
+                m for m in _fetch_all_memories() if m.get("project_slug") is None
+            ]
+            scope_label = "global"
+        else:
+            slug = None if args.project == "." else args.project
+            if slug is None:
+                # auto_attach=False: listing is read-only, and the default would
+                # POST /api/projects/auto-register - creating or attaching a
+                # project row as a side effect of reading.
+                slug = resolve_project_slug(os.getcwd(), auto_attach=False)
+                if slug is None:
+                    print(
+                        f"No project registered for {os.getcwd()}; showing global"
+                        " memories only (use --all or --project <slug>).",
+                        file=sys.stderr,
+                    )
+            memories = fetch_server_memories(slug)
+            scope_label = f"{slug} + global" if slug else "global"
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.json:
+        _print_json(memories)
+        return
+    for mem in memories:
+        print(_brief_line(mem))
+    print(f"{len(memories)} memories ({scope_label})", file=sys.stderr)
 
 
 def cmd_memory_get(args: argparse.Namespace) -> None:
@@ -408,7 +459,24 @@ def build_parser() -> argparse.ArgumentParser:
     mem = sub.add_parser("memory")
     mem_sub = mem.add_subparsers(dest="command")
 
-    mem_sub.add_parser("list")
+    ml = mem_sub.add_parser("list")
+    ml_scope = ml.add_mutually_exclusive_group()
+    ml_scope.add_argument(
+        "--project", metavar="SLUG",
+        help="scope to this project + globals ('.' = the project for cwd, the default)",
+    )
+    ml_scope.add_argument(
+        "--all", dest="all_scopes", action="store_true",
+        help="every scope, not just this project",
+    )
+    ml_scope.add_argument(
+        "--global", dest="globals_only", action="store_true",
+        help="global memories only",
+    )
+    ml.add_argument(
+        "--json", action="store_true",
+        help="full JSON rows including bodies (default: one index line per memory)",
+    )
 
     mg = mem_sub.add_parser("get")
     mg.add_argument("id", type=int)
