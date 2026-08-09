@@ -9,13 +9,16 @@ from fastapi.staticfiles import StaticFiles
 from server import config
 from server.db import close_db, get_db
 from server.routers import config as config_router
-from server.routers import hooks, memory, projects, sessions
+from server.routers import hooks, memory, projects, sessions, usage
 
 # Per-path request body caps. Pi memory is the limiting resource; `tool_input`
 # is an unbounded dict otherwise.
 _BODY_LIMITS: dict[str, int] = {
     "/api/hooks/event": 64 * 1024,
     "/api/config/claude-md": 1024 * 1024,
+    # Usage batches are chunked at 500 messages by the client; backfill sends
+    # them back to back, so this needs headroom over the default.
+    "/api/usage/messages": 1024 * 1024,
 }
 _DEFAULT_BODY_LIMIT = 256 * 1024
 
@@ -126,6 +129,7 @@ app.include_router(sessions.router)
 app.include_router(config_router.router)
 app.include_router(memory.router)
 app.include_router(projects.router)
+app.include_router(usage.router)
 
 
 @app.get("/api/health")
@@ -140,11 +144,40 @@ async def health():
     return {"status": "ok", "db": "ok"}
 
 
+# Dashboard pages and their assets are versionless: there is no build step, so
+# `usage.js` changes content at a stable URL. A client holding a cached copy of
+# one file against a fresh copy of another breaks the page outright (a stale
+# usage.js under a new usage.html raises "startUsage is not defined"), so every
+# static response revalidates. `no-cache` is not `no-store`: the ETag
+# StaticFiles already sends turns the revalidation into a cheap 304.
+_NO_CACHE = {"Cache-Control": "no-cache"}
+
+
 @app.get("/memory")
 async def memory_dashboard():
-    return FileResponse(config.BASE_DIR / "static" / "memory.html")
+    return FileResponse(
+        config.BASE_DIR / "static" / "memory.html", headers=_NO_CACHE
+    )
+
+
+@app.get("/usage")
+async def usage_dashboard():
+    return FileResponse(
+        config.BASE_DIR / "static" / "usage.html", headers=_NO_CACHE
+    )
+
+
+class RevalidatingStaticFiles(StaticFiles):
+    """StaticFiles that asks clients to revalidate (see _NO_CACHE above)."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 app.mount(
-    "/", StaticFiles(directory=str(config.BASE_DIR / "static"), html=True), name="static"
+    "/",
+    RevalidatingStaticFiles(directory=str(config.BASE_DIR / "static"), html=True),
+    name="static",
 )

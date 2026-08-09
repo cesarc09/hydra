@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hydra · Usage</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/usage.css">
+</head>
+<body>
+    <header class="container">
+        <nav>
+            <ul>
+                <li>
+                    <strong class="logo">Hydra · Usage</strong>
+                    <div class="sub-nav">
+                        <a href="/" class="nav-link">← Sessions</a>
+                        <a href="/memory" class="nav-link">Memory →</a>
+                    </div>
+                </li>
+            </ul>
+            <ul><li><span class="nav-link clickable" onclick="refresh()">Refresh</span></li></ul>
+        </nav>
+    </header>
+
+    <main class="container">
+        <div class="viz-root">
+            <section class="uz-toolbar">
+                <div id="machine-picker" class="uz-chips" hidden></div>
+                <div id="range-picker" class="uz-chips uz-chips-end"></div>
+            </section>
+
+            <section id="kpis" class="uz-kpis"><p class="empty-state">Loading…</p></section>
+
+            <section class="uz-panel">
+                <div class="uz-panel-head">
+                    <h3 class="uz-title">Daily cost</h3>
+                    <span id="chart-note" class="uz-note"></span>
+                </div>
+                <div id="chart-daily" class="uz-chart"></div>
+            </section>
+
+            <div class="uz-grid-2">
+                <section class="uz-panel">
+                    <h3 class="uz-title">Projects</h3>
+                    <div id="table-project"></div>
+                </section>
+                <section class="uz-panel">
+                    <h3 class="uz-title">Where it goes</h3>
+                    <p class="uz-note">Cache reads dominate token volume but bill at 0.1x, so cost has a different shape.</p>
+                    <div id="composition"></div>
+                </section>
+            </div>
+
+            <div class="uz-grid-2">
+                <section class="uz-panel">
+                    <h3 class="uz-title">Main vs subagents</h3>
+                    <div id="table-agent"></div>
+                </section>
+                <section class="uz-panel">
+                    <h3 class="uz-title">Models</h3>
+                    <div id="table-model"></div>
+                </section>
+            </div>
+
+            <section id="unpriced-warning" hidden></section>
+        </div>
+    </main>
+
+    <script src="/utils.js"></script>
+    <script src="/usage.js"></script>
+    <script>startUsage();</script>
+</body>
+</html>

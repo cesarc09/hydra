@@ -113,3 +113,49 @@ CREATE TABLE IF NOT EXISTS memories (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- Cross-machine token accounting. One row per API message, keyed on the
+-- transcript's message.id.
+--
+-- message_id is the PRIMARY KEY and ingest is INSERT OR IGNORE: that is the
+-- whole correctness story. Claude Code writes one assistant record per content
+-- block, all repeating the same usage (480 records for 234 messages in one
+-- measured session - 2.55x inflation if summed naively), and a resumed or
+-- forked session copies prior history into a NEW transcript file, so the same
+-- message.id legitimately arrives twice under two different session_ids. The
+-- client's byte offsets only decide what is *sent*; they may be wrong in either
+-- direction without corrupting the data.
+--
+-- session_id deliberately carries NO foreign key, unlike events.session_id:
+-- `hydra usage backfill` imports transcripts for sessions that predate Hydra or
+-- ran on a machine that never reported them, and with PRAGMA foreign_keys=ON a
+-- FK would reject exactly those rows.
+--
+-- Cache writes are split 5m/1h because they price differently (1.25x vs 2x base
+-- input). Claude Code writes 1h cache in practice, so collapsing the two would
+-- misprice the write side by 60%. Cost itself is never stored - pricing happens
+-- at query time (server/pricing.py) so a rate correction fixes all history.
+CREATE TABLE IF NOT EXISTS usage_messages (
+    message_id   TEXT PRIMARY KEY,
+    session_id   TEXT NOT NULL,
+    instance_id  TEXT NOT NULL,
+    ts           TEXT NOT NULL,      -- record timestamp from the transcript
+    cwd          TEXT,               -- resolved to a project at query time
+    model        TEXT NOT NULL,
+    effort       TEXT,               -- record-level `effort`; NULL on older models
+    is_subagent  INTEGER NOT NULL DEFAULT 0,
+    agent_type   TEXT,               -- `attributionAgent` ("Explore", ...)
+    service_tier TEXT,
+    speed        TEXT,
+    input_tokens          INTEGER NOT NULL DEFAULT 0,
+    output_tokens         INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
+    cache_write_5m_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_write_1h_tokens INTEGER NOT NULL DEFAULT 0,
+    web_search_requests   INTEGER NOT NULL DEFAULT 0,
+    web_fetch_requests    INTEGER NOT NULL DEFAULT 0,
+    received_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_messages(ts);
+CREATE INDEX IF NOT EXISTS idx_usage_session ON usage_messages(session_id);

@@ -13,6 +13,8 @@ from hydra_cli.commands import run_pull
 from hydra_cli.hooks import run_pull as run_hooks_pull
 from hydra_cli.remote import cmd_capture_remote_url
 from hydra_cli.sync import cmd_sync, fetch_server_memories, resolve_project_slug
+from hydra_cli.usage import cmd_report as _run_usage_report
+from hydra_cli.usage import run_backfill
 
 
 def _die(status: int, body: str) -> None:
@@ -354,6 +356,48 @@ def _fmt_offenders(items: list[str], cap: int = 5) -> str:
     return shown + (f" (+{extra} more)" if extra > 0 else "")
 
 
+# --- usage (token accounting) ---
+
+
+def cmd_usage_report(args: argparse.Namespace) -> None:
+    sys.exit(_run_usage_report(args))
+
+
+def cmd_usage_backfill(args: argparse.Namespace) -> None:
+    sys.exit(run_backfill(args.root))
+
+
+def cmd_usage_summary(args: argparse.Namespace) -> None:
+    query = f"?group_by={args.group_by}"
+    if args.since:
+        query += f"&since={args.since}"
+    if args.until:
+        query += f"&until={args.until}"
+    status, body = api.get(f"/api/usage/summary{query}")
+    if status != 200:
+        _die(status, body)
+    data = json.loads(body)
+
+    def fmt(row: dict) -> str:
+        tokens = sum(
+            int(row[k])
+            for k in ("input_tokens", "output_tokens", "cache_read_tokens",
+                      "cache_write_5m_tokens", "cache_write_1h_tokens")
+        )
+        unpriced = int(row["unpriced_messages"])
+        flag = f"  ({unpriced} unpriced)" if unpriced else ""
+        cost = float(row["cost_usd"])
+        return f"{row['key']!s:<28} {tokens:>14,} tok  ${cost:>9.2f}{flag}"
+
+    print(f"by {data['group_by']}:")
+    for row in data["rows"]:
+        print(f"  {fmt(row)}")
+    print(f"  {'-' * 60}")
+    print(f"  {fmt(data['totals'])}")
+    if data["unpriced_models"]:
+        print(f"\n  unpriced models: {', '.join(data['unpriced_models'])}")
+
+
 def cmd_doctor(args: argparse.Namespace) -> None:
     """Deterministic instance diagnostics: connectivity, auth, stats, and data
     anomalies. Prints a compact report and exits 0 - status lives in the text,
@@ -584,6 +628,26 @@ def build_parser() -> argparse.ArgumentParser:
     hdel = hks_sub.add_parser("delete")
     hdel.add_argument("name")
 
+    usage = sub.add_parser("usage", help="token accounting")
+    usage_sub = usage.add_subparsers(dest="command")
+
+    usage_sub.add_parser(
+        "report", help="hook: send this session's new token usage to Hydra"
+    )
+    ubf = usage_sub.add_parser(
+        "backfill", help="import every transcript on this machine (re-runnable)"
+    )
+    ubf.add_argument("--root", help="transcript root (default ~/.claude/projects)")
+    usm = usage_sub.add_parser("summary", help="print aggregated usage")
+    usm.add_argument(
+        "--group-by",
+        dest="group_by",
+        default="day",
+        choices=["day", "model", "project", "instance", "agent"],
+    )
+    usm.add_argument("--since", help="ISO date/datetime, inclusive")
+    usm.add_argument("--until", help="ISO date/datetime, exclusive")
+
     # --- sync (no subcommand; flags drive direction) ---
     sync = sub.add_parser("sync", help="reconcile memories between local dir and hydra")
     sync.add_argument("--pull", action="store_true", help="download only")
@@ -643,6 +707,9 @@ DISPATCH = {
     ("hooks", "get"): cmd_hooks_get,
     ("hooks", "list"): cmd_hooks_list,
     ("hooks", "delete"): cmd_hooks_delete,
+    ("usage", "report"): cmd_usage_report,
+    ("usage", "backfill"): cmd_usage_backfill,
+    ("usage", "summary"): cmd_usage_summary,
     ("sync", None): cmd_sync,
     ("doctor", None): cmd_doctor,
     ("capture-remote-url", None): cmd_capture_remote_url,

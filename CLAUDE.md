@@ -56,13 +56,18 @@ server/
     memory.py         - CRUD /api/memory; upsert on name (globally unique; 409 on a
                         cross-scope name without rescope) + filtered GET
     projects.py       - CRUD /api/projects + auto-register + confirm endpoints
+    usage.py          - POST /api/usage/messages (INSERT OR IGNORE on message_id),
+                        GET /api/usage/summary?group_by=day|model|project|instance|agent
+                        (+ since / until / instance filters)
+  pricing.py          - Per-model rate table; prices grouped rows at QUERY time.
+                        Unknown model -> cost None + unpriced_messages, never 0
   services/
     session_manager.py - State machine, bounded SSE broadcast, DB writes, archive ops
     slug.py            - Slug normalization + stoplist for auto-registered projects
 client/
   hydra_cli/
     __main__.py            - CLI dispatch (memory, project, config, commands, hooks, sync,
-                              doctor, capture-remote-url, apply-settings)
+                              usage, doctor, capture-remote-url, apply-settings)
     api.py                 - Stdlib urllib + bearer token + User-Agent header
     sync.py                - Memory sync, keyed on the server row id (stamped into each
                               mirror file's frontmatter). Frontmatter parse, collision-free
@@ -72,6 +77,8 @@ client/
     hooks.py               - `hooks pull`: fetch the server hook map, install
                               ~/.claude/hooks/<name>.<ext>, render the wiring layer
                               ~/.claude/settings.hooks.json, state-file-scoped prune
+    usage.py               - Stop/SessionEnd entry: parses transcript usage, per-session
+                              byte offsets in ~/.claude/.hydra-usage/, `usage backfill`
     remote.py              - Stop-hook entry: scans transcript for bridge_status, PUTs URL
     apply_settings.py      - 4-way merge for ~/.claude/settings.json (hydra hooks →
                               server policy hooks → template defaults → user overrides)
@@ -94,6 +101,13 @@ static/
   index.html, app.js   - Sessions dashboard (/); archive, Recent Events chip filter
   memory.html, memory.js - Memory dashboard (/memory); browse, delete, copy, move,
                             pending-review queue for auto-registered projects
+  usage.html, usage.js, usage.css - Usage dashboard (/usage); KPI row, daily cost
+                            column chart (inline SVG, no charting lib), ranked tables,
+                            token-vs-cost composition bars. Categorical slots are
+                            validated - see Key Patterns before recolouring. The
+                            machine filter hides itself below 2 machines, and its
+                            list is fetched UNSCOPED so picking one never hides
+                            the rest
   utils.js             - Shared apiFetch + token handling, escHtml (loaded before page JS)
   style.css            - Shared styles (no build step, bearer-token prompt)
 tests/
@@ -117,10 +131,15 @@ tests/
   test_doctor.py      - `hydra doctor` report (stats aggregation + anomaly checks, mocked api)
   test_session_archive.py - Archive endpoints + auto-unarchive on new activity
   test_startup.py     - Fail-closed startup guard
+  test_usage.py       - /api/usage ingest idempotence (replay, cross-session id, no FK)
+                        + summary grouping, per-model pricing, unpriced models
+  test_usage_report.py - `usage report`: record→message dedupe, subagent discovery,
+                        symlinked workflow dirs, offsets (failure, partial line, truncation)
 schema.sql            - DDL; sessions.archived_at, memories project_slug FK + UNIQUE(name)
                         (inline; db._migrate installs it on legacy DBs - see Key Patterns),
                         config_commands (server-distributed slash commands),
-                        config_hooks (server-distributed policy hooks: script + wiring)
+                        config_hooks (server-distributed policy hooks: script + wiring),
+                        usage_messages (per-API-message token counts, PK message_id)
 ```
 
 ## Key Patterns
@@ -145,6 +164,15 @@ schema.sql            - DDL; sessions.archived_at, memories project_slug FK + UN
   - **Scope filters are client-side.** `enabled` is the fleet-wide off switch; `instances` (JSON array, NULL = everywhere) is matched against `HYDRA_INSTANCE_ID` by the *client*, so `GET /api/config/hooks` keeps returning the whole fleet's config to any machine. `ORDER BY name` on that query - SQLite promises no order without it, and an unstable one rewrites `settings.json` every pull.
   - **`HYDRA_POLICY_HOOKS_DISABLE` empties the wiring layer and nothing else.** Hydra's telemetry `http` hooks and the `sync` / `commands pull` / `capture-remote-url` lines live in `client/settings.json`, a layer the puller never writes, so observability survives a machine switching its policy hooks off. Claude Code's own `disableAllHooks` is the wider blast radius when nothing may run.
   - **Hook sources live outside this repo**, like private slash commands - Hydra ships the mechanism and no `client/hooks/` content, seeded with `hydra hooks put`.
+- **Token usage: the row key is `message.id`, everything else is an optimisation.** `usage_messages.message_id` is the PK and ingest is `INSERT OR IGNORE`, which is the entire correctness story: Stop-hook retries, `usage backfill` re-runs and resumed sessions all replay ids safely. The client's per-session byte offsets (`~/.claude/.hydra-usage/<session_id>.json`) only decide what is *sent* and may be lost or stale without corrupting anything. Traps that shaped this, all measured on a 719-file / 41k-record corpus:
+  - **One API message writes N assistant records, each repeating the same usage** (41,036 records → 17,726 messages; 2.55x output inflation on one session). Dedupe on `message.id`, first seen wins.
+  - **Subagent usage is not in the main transcript** - it lives in `<dir>/<session_id>/subagents/**`, self-describing via `attributionAgent`. `transcript_files()` uses `rglob`, which does **not** follow symlinks, and that is deliberate: Claude Code aliases a workflow's subagent dir into sessions that consume it (`A/…/wf_x -> B/…/wf_x`), and following the link would attribute one workflow's agents to whichever session scanned first. Every real file is reachable without symlinks, so nothing is lost.
+  - **`message.id` repeats across transcript files** after a resume or fork (124 shared ids between two real sessions) - per-session dedupe is not enough, hence the global PK.
+  - **`toolUseResult.totalTokens` is the final message's counters summed, not a run total** (190k reported vs 18.5M actually spent). Use it for attribution, never spend.
+  - **`usage_messages.session_id` has no FK** (unlike `events.session_id`): backfill imports sessions the server never saw, and `PRAGMA foreign_keys=ON` would reject exactly those.
+  - **Cache writes are split 5m/1h** (1.25x vs 2x base input; Claude Code writes 1h). The TTL buckets and `cache_creation_input_tokens` disagree ~15 times in 41k records in both directions: buckets win when non-zero (they match `iterations`), and a positive shortfall against the reported total is added to the 5m bucket rather than dropped.
+  - **Cost is priced at query time in `server/pricing.py`, never stored**, so a rate fix corrects history. An unknown model yields `cost_usd: None` + `unpriced_messages`, **never 0** - a silent $0 for a new model is the one failure that makes the dashboard quietly wrong. No `[1m]` dimension is needed: every current model serves 1M context at standard rates. `cost_components` splits a group's cost by token kind server-side rather than in JS, so the rate table stays the single source of truth.
+- **`/usage` chart palette is validated, not chosen by eye.** The four categorical slots in `static/usage.css` (`--series-1..4`) are the dark steps of a validated palette in a fixed order, measured against this page's real `#2C3233` surface: worst adjacent CVD ΔE **9.4**, normal-vision **26.5**, all ≥3:1 contrast. Reordering or substituting them re-runs those gates - a hand-picked warm set failed both the dark lightness band and the chroma floor (two of four would have read grey). Slots follow the entity, never its rank, so a filter never repaints the survivors. Everything else on the page is magnitude, which is why the ranked bars are deliberately **one** hue and carry meaning by length. Three defects only a render caught: a scaled `viewBox` distorts label text (render at measured pixel size), `max/4` ticks read `$47.21` (snap to 1/2/5×10ⁿ), and columns need a **band** scale or the first one sits on the axis labels.
 - **Instance diagnostics (`hydra doctor` + `/debug-hydra`):** the gathering lives in the CLI, not the slash command. `hydra doctor` probes `/api/health` (unauthenticated, catches `URLError` → server DOWN), then an authed call (200/401 → auth state), then aggregates stats and checks corpus invariants (user/feedback memories pinned to a project, memories on an unregistered slug, pathless projects, pending review). It prints a labeled report and **exits 0 with status in the text** so a wrapper never loses output - run it standalone for a zero-token health check. `/debug-hydra` just runs it and spends tokens on interpretation: a slash command earns its round-trip only when the LLM adds judgment, so raw stats belong in the CLI, never a relay-only command. `/api/health` must be deployed (server restart) before doctor reports `server: UP`; a stale server 404s as `DEGRADED`.
 - **Upsert semantics:** memory names are **globally unique, scope-independent** - one name = one memory (`UNIQUE(name)`). `POST /api/memory` upserts on name; a POST whose name already exists in a *different* scope is **409** unless it passes `rescope: true`. That guard is what stops a by-name push (any id-less mirror file) from silently unpinning a memory someone deliberately scoped to a project. `PUT /api/memory/{id}` uses `model_dump(exclude_unset=True)`, so `{"project_slug": null}` **unpins** - dropping every None instead would make an unpin unexpressible, which is what forced re-scopes through delete + re-create in the first place.
 - **Legacy DBs (`_ensure_unique_memory_names` in `db.py`):** pre-existing DBs used two *partial* unique indexes, so one name could exist twice (once global, once pinned) - the shape the duplicate bug lived in. The migration collapses exact twins (a global row byte-identical to a pinned one is a stale-mirror re-insert; the pinned row wins), **renames** any remaining duplicate rather than deleting it, then swaps in `UNIQUE(name)`. The unique index is inline in `schema.sql` for fresh DBs but installed by `_migrate` for existing ones, because `get_db()` runs `schema.sql` *before* `_migrate` and a bare `CREATE UNIQUE INDEX` would abort startup while duplicates still exist.

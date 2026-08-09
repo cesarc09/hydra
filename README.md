@@ -10,7 +10,7 @@ Two things about Claude Code hurt once you use it on more than one machine.
 
 **Every session runs in isolation.** You can't tell at a glance which session on which machine is waiting for input, what just got edited, or whether something is stuck.
 
-Hydra is one server that solves both. A memory store and CLAUDE.md that travel with you across machines - pulled when a session starts, pushed when it ends - and a live dashboard that watches every session in real time. Same server, same bearer token; the two are independent, so observation keeps working if sync fails, and vice versa.
+Hydra is one server that solves both. A memory store and CLAUDE.md that travel with you across machines - pulled when a session starts, pushed when it ends - a live dashboard that watches every session in real time, and token accounting across machines. Same server, same bearer token; the loops are independent, so observation keeps working if sync fails, and vice versa.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -36,6 +36,8 @@ Two loops run continuously:
 **Context loop** - `python -m hydra_cli sync` reconciles each machine's local memory dir (`~/.claude/projects/<dir>/memory/`) with the server. A SessionStart hook runs `python -m hydra_cli sync --pull` before Claude sees the session; a Stop hook runs `python -m hydra_cli sync --push` at turn end. Memories are typed: `user`/`feedback` are global (available everywhere), `project`/`reference` are pinned to the project the cwd maps to. Unregistered cwds auto-register via the server (with a stoplist for `~`, `~/Downloads`, `/tmp`, etc.) and surface in the dashboard's **Pending review** section for confirmation or deletion. The same SessionStart pass pulls server-distributed slash commands into `~/.claude/commands/` and policy hooks into `~/.claude/hooks/`, so a command or hook published once reaches every machine.
 
 **Observation loop** - every Claude Code tool call fires an HTTP hook to `/api/hooks/event`. The server tracks session state transitions (active / idle / waiting_input / ended) and broadcasts them over Server-Sent Events to any open dashboard.
+
+**Accounting loop** - a Stop hook runs `python -m hydra_cli usage report`, which parses the session's transcript and its subagents' and posts per-message token counts to `/api/usage/messages`. Rows are keyed on the API message id, so retries and `python -m hydra_cli usage backfill` are idempotent; `/usage` prices them server-side.
 
 Same bearer token, same server, but the two loops don't depend on each other.
 
@@ -125,7 +127,7 @@ Set `HYDRA_POLICY_HOOKS_DISABLE=1` on a machine to stop applying server-distribu
 
 ## Dashboard
 
-Two pages, both behind the bearer token:
+Three pages, all behind the bearer token:
 
 - **`/` - Sessions.** Live grid of session cards (active / waiting / idle / ended), grouped by status and updated via SSE.
   - **Archive** ended or idle sessions to hide them from the main view (per-card `×` or the bulk "Archive ended/idle" button). Archived sessions stay in the DB under a collapsible **Archive** section and auto-unarchive if they receive a new hook event.
@@ -135,6 +137,8 @@ Two pages, both behind the bearer token:
   - Click a memory name to expand its body inline.
   - Per memory: **Delete**, **Move to project**, **Move to global** (pick new `user` / `feedback` type), and **Move to projects** to split a global memory across several (each copy is named `<name>-<slug>`, since names are globally unique). Re-scoping happens in place, so a memory keeps its id and its mirror files stay valid. Read-only bodies - edits still go through `python -m hydra_cli sync`.
   - Stats header: project count and memory count, split global vs project-scoped.
+- **`/usage` - Token accounting.** Cost and tokens across machines, by day / project / model / subagent.
+  - Range chips (7d / 30d / 90d / all); the machine filter appears once a second machine reports. Unknown models are counted but left unpriced, never shown as $0.
 
 ## Session State Machine
 

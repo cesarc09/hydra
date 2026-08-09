@@ -18,8 +18,13 @@ import sys
 from hydra_cli import api
 
 
-def _read_hook_payload() -> dict:
-    """Claude Code hooks pipe their event payload as JSON on stdin."""
+def read_hook_payload() -> dict:
+    """Claude Code hooks pipe their event payload as JSON on stdin.
+
+    Public because every command-type hook entry point needs it (`usage report`
+    as well as this module); returns {} rather than raising so a hook never dies
+    on a malformed or absent payload.
+    """
     if sys.stdin.isatty():
         return {}
     raw = sys.stdin.read().strip()
@@ -66,7 +71,7 @@ def latest_bridge_url(transcript_path: str) -> str | None:
 
 
 def cmd_capture_remote_url(args: argparse.Namespace) -> None:
-    payload = _read_hook_payload()
+    payload = read_hook_payload()
     session_id = payload.get("session_id") or ""
     transcript_path = payload.get("transcript_path") or ""
     if not session_id or not transcript_path:

@@ -1,0 +1,95 @@
+/* Usage dashboard visual layer.
+   Palette roles are declared once here and referenced by role below, so the
+   whole page re-themes from this block. The categorical slots are the validated
+   dark steps in a fixed order (worst adjacent CVD dE 9.4, normal-vision 26.5
+   against this page's #2C3233 surface) - do not reorder without re-validating. */
+.viz-root {
+    --surface: #2C3233;
+    --panel: #353d3e;
+    --ink: #D9CAB3;
+    --ink-2: #a89a84;
+    --muted: #8a9496;
+    --grid: #404b4c;
+    --axis: #4a5657;
+    --bar: #b5893a;
+    --bar-soft: #6d5f45;
+    --series-1: #c98500;
+    --series-2: #3987e5;
+    --series-3: #d95926;
+    --series-4: #199e70;
+}
+
+.uz-toolbar { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; margin-bottom: 1rem; }
+/* Ranges stay right-aligned whether or not the machine filter is present. */
+.uz-chips-end { margin-left: auto; }
+.uz-chips { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.uz-chip {
+    cursor: pointer; user-select: none;
+    padding: 0.15rem 0.7rem; border-radius: 999px;
+    font-size: 0.82em; color: var(--muted);
+    border: 1px solid var(--grid); background: transparent;
+}
+.uz-chip:hover { color: var(--ink); border-color: var(--axis); }
+.uz-chip.active { color: #23282a; background: var(--ink); border-color: var(--ink); }
+
+/* --- KPI row --- */
+.uz-kpis { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+.uz-kpi {
+    flex: 1 1 8rem; padding: 0.7rem 0.9rem;
+    background: var(--panel); border: 1px solid var(--grid); border-radius: 8px;
+}
+.uz-kpi-value { display: block; font-size: 1.5rem; line-height: 1.15; color: var(--ink); }
+.uz-kpi-label { display: block; font-size: 0.75rem; color: var(--muted); margin-top: 0.15rem; }
+.uz-kpi.lead .uz-kpi-value { font-size: 2.6rem; }
+
+/* --- panels --- */
+.uz-panel {
+    background: var(--panel); border: 1px solid var(--grid); border-radius: 8px;
+    padding: 1rem 1.1rem; margin-bottom: 1rem;
+}
+.uz-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.uz-title { color: var(--ink); font-size: 0.95rem; margin: 0 0 0.6rem; }
+.uz-note { color: var(--muted); font-size: 0.8rem; margin: 0 0 0.6rem; }
+.uz-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+@media (max-width: 860px) { .uz-grid-2 { grid-template-columns: 1fr; } }
+
+/* --- charts --- */
+.uz-chart { position: relative; height: 190px; }
+.uz-chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.uz-tip {
+    position: absolute; pointer-events: none; z-index: 5;
+    background: #23282a; border: 1px solid var(--axis); border-radius: 6px;
+    padding: 0.4rem 0.6rem; font-size: 0.78rem; color: var(--ink);
+    white-space: nowrap; transform: translate(-50%, -115%); opacity: 0;
+    transition: opacity 0.08s linear;
+}
+.uz-tip.on { opacity: 1; }
+.uz-tip-k { color: var(--muted); }
+
+/* --- ranked rows --- */
+.uz-row {
+    display: grid; grid-template-columns: minmax(5rem, 11rem) 1fr 4.5rem 5rem;
+    align-items: center; gap: 0.7rem; padding: 0.22rem 0; font-size: 0.86rem;
+}
+.uz-row:hover { background: #3b4445; border-radius: 4px; }
+.uz-row-key { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.uz-track { background: #2b3233; border-radius: 3px; height: 0.5rem; overflow: hidden; }
+.uz-fill { display: block; height: 100%; background: var(--bar); border-radius: 0 3px 3px 0; }
+.uz-num { text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.uz-num-2 { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+@media (max-width: 700px) {
+    .uz-row { grid-template-columns: 1fr 4rem 4.5rem; }
+    .uz-track { display: none; }
+}
+
+/* --- composition --- */
+.uz-comp { margin-bottom: 0.9rem; }
+.uz-comp-head { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--muted); margin-bottom: 0.25rem; }
+.uz-comp-bar { display: flex; height: 1.6rem; border-radius: 4px; overflow: hidden; gap: 2px; }
+.uz-seg { position: relative; min-width: 2px; display: flex; align-items: center; justify-content: center; }
+.uz-seg-label { font-size: 0.72rem; color: #23282a; padding: 0 0.3rem; white-space: nowrap; overflow: hidden; }
+.uz-legend { display: flex; gap: 1rem; flex-wrap: wrap; font-size: 0.78rem; color: var(--ink-2); margin-top: 0.5rem; }
+.uz-legend-item { display: flex; align-items: center; gap: 0.35rem; }
+.uz-swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+
+.uz-warning { color: #fab219; font-size: 0.85rem; }

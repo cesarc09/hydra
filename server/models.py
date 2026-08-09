@@ -167,3 +167,39 @@ class AutoRegisterResponse(BaseModel):
     status: Literal["existing", "attached", "created", "skipped"]
     slug: str | None = None
     reason: str | None = None
+
+
+# --- Token usage ---
+
+
+class UsageMessage(BaseModel):
+    """One API message's token usage, as parsed from a transcript record.
+
+    `message_id` is the transcript's `message.id` and the server's primary key,
+    so re-sending a message is a no-op. Counters default to 0 rather than being
+    required: older records omit fields (`speed`, the `cache_creation` split),
+    and a missing counter is genuinely zero spend.
+    """
+    message_id: str = Field(min_length=1, max_length=128)
+    ts: str = Field(min_length=1, max_length=64)
+    model: str = Field(min_length=1, max_length=128)
+    cwd: str | None = Field(default=None, max_length=4096)
+    effort: str | None = Field(default=None, max_length=32)
+    is_subagent: bool = False
+    agent_type: str | None = Field(default=None, max_length=128)
+    service_tier: str | None = Field(default=None, max_length=32)
+    speed: str | None = Field(default=None, max_length=32)
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    cache_read_tokens: int = Field(default=0, ge=0)
+    cache_write_5m_tokens: int = Field(default=0, ge=0)
+    cache_write_1h_tokens: int = Field(default=0, ge=0)
+    web_search_requests: int = Field(default=0, ge=0)
+    web_fetch_requests: int = Field(default=0, ge=0)
+
+
+class UsageBatch(BaseModel):
+    """Body for POST /api/usage/messages. One batch belongs to one session;
+    `instance_id` rides the X-Instance-Id header like every other client call."""
+    session_id: str = Field(min_length=1, max_length=128)
+    messages: list[UsageMessage] = Field(default_factory=list)

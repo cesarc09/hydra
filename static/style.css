@@ -296,6 +296,8 @@ a.file-link:hover {
 .sub-nav {
     margin-top: -0.2em;
     line-height: 1.2;
+    display: flex;
+    gap: 0.9rem;
 }
 .sub-nav .nav-link {
     font-size: 1em;
@@ -666,4 +668,3 @@ a.file-link:hover {
 .archived-card {
     opacity: 0.7;
 }
-
