@@ -21,12 +21,14 @@ the removed env-var path and can't be overridden in-session), a top-level
 `defaultMode` is moved inside `permissions`, where Claude Code expects it, and
 wiring for a hook the server now distributes is removed - `merge` concatenates
 per-event groups rather than deduping them, so a hook left in both layers would
-fire twice.
+fire twice - and an untouched `statusLine` block is dropped so later template
+changes to it land, including the move to the namespaced managed script.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 import sys
@@ -34,6 +36,31 @@ from pathlib import Path
 from typing import Any
 
 from hydra_cli.hooks import managed_filenames
+
+# Keep the old path: this identifies the pre-refreshInterval scaffold.
+_SCAFFOLDED_STATUSLINE = {"type": "command", "command": "~/.claude/statusline.sh"}
+
+# Every version of statusline.sh Hydra ever installed at the legacy path. A file
+# hashing to one of these is an untouched scaffold, so re-pointing the machine
+# costs nothing; anything else is the user's own script, reached through the old
+# installer's supported "edit it in place" path, and re-pointing would silently
+# stop running it. Droppable once no machine still has a pre-rename copy.
+_SHIPPED_LEGACY_STATUSLINE = frozenset({
+    "f32772351bf43754477dd286ec04ef79d1236ded2fd0d323ce614cb024a7215a",
+    "ab3df8713442ba317922f7204de77b0180c8b228c2200eba0219ccf973289b4f",
+    "5fea137c96221ace3e082fdcea720714f83b959c9550de162e67792465039782",
+})
+
+
+def _legacy_statusline_is_ours(path: Path | None) -> bool:
+    """True when the legacy script is absent or is a version Hydra shipped."""
+    if path is None or not path.exists():
+        return True
+    try:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return False  # unreadable: assume it is theirs and leave the wiring alone
+    return digest in _SHIPPED_LEGACY_STATUSLINE
 
 
 def substitute(text: str, hydra_url: str, hydra_repo_path: str) -> str:
@@ -98,7 +125,9 @@ def _strip_server_hooks(
 
 
 def migrate_user_settings(
-    user: dict[str, Any], managed_hooks: set[str] | None = None
+    user: dict[str, Any],
+    managed_hooks: set[str] | None = None,
+    legacy_statusline: Path | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """One-time migrations for user files scaffolded from older templates.
 
@@ -112,6 +141,21 @@ def migrate_user_settings(
       hand-wired in the user file before Hydra could distribute them, and
       `merge` concatenates per-event groups rather than deduping, so leaving
       both would run the hook twice.
+    - A `statusLine` block byte-equal to the legacy scaffold (the pre-
+      `refreshInterval`, pre-rename one) is dropped, so the template default
+      applies again - here and for every later change to it. The user layer wins
+      outright on this key, so leaving the block would pin the machine to
+      `~/.claude/statusline.sh`, a path Hydra no longer maintains: the managed
+      pair is now `~/.claude/hydra_statusline.{sh,py}`, and that stale path is
+      either an orphan or the user's own unrelated script. Dropping the block is
+      what re-points an existing machine at the current managed script. Any other
+      value is a deliberate choice and is kept - including a deliberate
+      `~/.claude/statusline.sh` pointing at the user's own file.
+      The block is dropped ONLY when the legacy script is absent or hashes to a
+      version Hydra shipped. The old installer's supported way to customize was
+      to edit `~/.claude/statusline.sh` in place, and the rename deliberately
+      leaves that file alone - so re-pointing a machine whose copy the user has
+      edited would honor their file while silently ceasing to run it.
 
     Returns the migrated dict and whether anything changed.
     """
@@ -124,6 +168,11 @@ def migrate_user_settings(
         permissions = dict(migrated.get("permissions") or {})
         permissions.setdefault("defaultMode", migrated.pop("defaultMode"))
         migrated["permissions"] = permissions
+        changed = True
+    if migrated.get("statusLine") == _SCAFFOLDED_STATUSLINE and _legacy_statusline_is_ours(
+        legacy_statusline
+    ):
+        del migrated["statusLine"]
         changed = True
     if managed_hooks and isinstance(migrated.get("hooks"), dict):
         hooks, hooks_changed = _strip_server_hooks(migrated["hooks"], managed_hooks)
@@ -168,12 +217,15 @@ def cmd_apply_settings(args: argparse.Namespace) -> None:
         except (OSError, json.JSONDecodeError) as exc:
             print(f"Ignoring unreadable hooks layer {hooks_layer}: {exc}", file=sys.stderr)
 
-    user, user_changed = migrate_user_settings(user, managed_filenames())
+    user, user_changed = migrate_user_settings(
+        user, managed_filenames(), user_file.parent / "statusline.sh"
+    )
     if user_changed:
         user_file.write_text(json.dumps(user, indent=2) + "\n", encoding="utf-8")
         print(
             f"Migrated {user_file} to the current format (dropped stale effortLevel / "
-            f"moved defaultMode into permissions / removed server-distributed hooks)",
+            f"moved defaultMode into permissions / removed server-distributed hooks / "
+            f"unpinned an untouched statusLine)",
             file=sys.stderr,
         )
 

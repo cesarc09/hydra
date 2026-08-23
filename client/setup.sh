@@ -62,13 +62,14 @@ python -m hydra_cli apply-settings \
     --hydra-url "$HYDRA_URL" \
     --hydra-repo-path "$HYDRA_REPO_PATH"
 
-# Scaffold the default status-line script. Only on first run - user edits stay.
-STATUSLINE_SRC="$SCRIPT_DIR/statusline.sh"
-STATUSLINE_DST="$CLAUDE_DIR/statusline.sh"
-if [ -f "$STATUSLINE_SRC" ] && [ ! -f "$STATUSLINE_DST" ]; then
-    cp "$STATUSLINE_SRC" "$STATUSLINE_DST"
-    chmod +x "$STATUSLINE_DST"
-    echo "  Scaffolded: $STATUSLINE_DST  (edit to customize; survives re-runs)"
+# Refresh the namespaced, Hydra-managed status-line scripts.
+for STATUSLINE_FILE in hydra_statusline.sh hydra_statusline.py; do
+    STATUSLINE_SRC="$SCRIPT_DIR/$STATUSLINE_FILE"
+    [ -f "$STATUSLINE_SRC" ] || continue
+    cp "$STATUSLINE_SRC" "$CLAUDE_DIR/$STATUSLINE_FILE"
+done
+if [ -f "$CLAUDE_DIR/hydra_statusline.sh" ]; then
+    chmod +x "$CLAUDE_DIR/hydra_statusline.sh"
 fi
 
 # Slash commands are no longer copied from the repo. The Hydra server is the

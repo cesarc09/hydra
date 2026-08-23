@@ -15,6 +15,7 @@
   "cleanupPeriodDays": 999,
   "statusLine": {
     "type": "command",
-    "command": "~/.claude/statusline.sh"
+    "command": "~/.claude/hydra_statusline.sh",
+    "refreshInterval": 30
   }
 }

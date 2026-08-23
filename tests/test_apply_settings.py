@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
+from hydra_cli import apply_settings
 from hydra_cli.apply_settings import (
     cmd_apply_settings,
     merge,
@@ -134,7 +136,12 @@ def test_apply_template_default_flows_when_user_file_lacks_key(tmp_path: Path) -
     user_tpl = tmp_path / "user.template.json"
     user_tpl.write_text(
         json.dumps(
-            {"statusLine": {"type": "command", "command": "~/.claude/statusline.sh"}}
+            {
+                "statusLine": {
+                    "type": "command",
+                    "command": "~/.claude/hydra_statusline.sh",
+                }
+            }
         )
     )
     user_file = tmp_path / "user.json"
@@ -153,8 +160,49 @@ def test_apply_template_default_flows_when_user_file_lacks_key(tmp_path: Path) -
     )
 
     out = json.loads(output.read_text())
-    assert out["statusLine"] == {"type": "command", "command": "~/.claude/statusline.sh"}
+    assert out["statusLine"] == {
+        "type": "command",
+        "command": "~/.claude/hydra_statusline.sh",
+    }
     assert out["effortLevel"] == "low"  # user override still wins
+
+
+def test_migrate_unpins_an_untouched_statusline() -> None:
+    """The legacy scaffolded block carries no user intent, and the user layer
+    wins outright on this key - left in place it would pin the machine to
+    ~/.claude/statusline.sh, which Hydra no longer installs. The pre-rename path
+    below is the thing being recognised and must NOT be updated."""
+    migrated, changed = migrate_user_settings(
+        {"statusLine": {"type": "command", "command": "~/.claude/statusline.sh"}}
+    )
+    assert changed
+    assert "statusLine" not in migrated
+
+
+def test_migrate_leaves_the_current_managed_statusline_alone() -> None:
+    """A block already pointing at the namespaced managed script is current, not
+    a legacy scaffold - migrating it would drop a correct block every run."""
+    current = {"type": "command", "command": "~/.claude/hydra_statusline.sh"}
+    migrated, changed = migrate_user_settings({"statusLine": current})
+    assert not changed
+    assert migrated["statusLine"] == current
+
+
+def test_migrate_keeps_a_customized_statusline() -> None:
+    custom = {"type": "command", "command": "~/bin/mine.sh"}
+    migrated, changed = migrate_user_settings({"statusLine": custom})
+    assert not changed
+    assert migrated["statusLine"] == custom
+
+    # Already migrated: the template's own block is not the scaffolded one.
+    current = {
+        "type": "command",
+        "command": "~/.claude/hydra_statusline.sh",
+        "refreshInterval": 30,
+    }
+    migrated, changed = migrate_user_settings({"statusLine": current})
+    assert not changed
+    assert migrated["statusLine"] == current
 
 
 def test_apply_preserves_existing_user_file(tmp_path: Path) -> None:
@@ -465,3 +513,54 @@ def test_apply_rewrites_user_file_dropping_duplicated_wiring(
     guards = [g for g in groups if "guard.py" in json.dumps(g)]
     assert len(guards) == 1
     assert json.loads(user_file.read_text())["hooks"] == {}
+
+
+def test_shipped_layers_do_not_share_a_top_level_key() -> None:
+    """One key, one shipped layer. `merge` replaces every key except `hooks`
+    wholesale, so a key present in both files silently loses the earlier
+    layer's value on every machine - with nobody having customized anything.
+    `hooks` is exempt: those concatenate per event rather than replace."""
+    client = Path(__file__).resolve().parents[1] / "client"
+    base = json.loads((client / "settings.json").read_text(encoding="utf-8"))
+    defaults = json.loads((client / "settings.user.template.json").read_text(encoding="utf-8"))
+
+    shared = (set(base) & set(defaults)) - {"hooks"}
+    assert not shared, (
+        f"{sorted(shared)} appears in both settings.json and settings.user.template.json; "
+        f"the later layer wins wholesale, so move it into exactly one of them"
+    )
+
+
+SCAFFOLD = {"type": "command", "command": "~/.claude/statusline.sh"}
+
+
+def test_migration_fires_when_the_legacy_script_is_absent(tmp_path: Path) -> None:
+    migrated, changed = migrate_user_settings(
+        {"statusLine": SCAFFOLD}, None, tmp_path / "statusline.sh"
+    )
+    assert changed
+    assert "statusLine" not in migrated
+
+
+def test_migration_fires_on_an_untouched_shipped_script(tmp_path, monkeypatch) -> None:
+    legacy = tmp_path / "statusline.sh"
+    legacy.write_bytes(b"#!/bin/bash\n# a version Hydra shipped\n")
+    monkeypatch.setattr(
+        apply_settings,
+        "_SHIPPED_LEGACY_STATUSLINE",
+        frozenset({hashlib.sha256(legacy.read_bytes()).hexdigest()}),
+    )
+    migrated, changed = migrate_user_settings({"statusLine": SCAFFOLD}, None, legacy)
+    assert changed
+    assert "statusLine" not in migrated
+
+
+def test_migration_spares_a_user_edited_legacy_script(tmp_path: Path) -> None:
+    """The old installer's supported customization was editing this file in
+    place. The rename leaves it alone, so re-pointing the machine away from it
+    would honor the file while silently ceasing to run it."""
+    legacy = tmp_path / "statusline.sh"
+    legacy.write_bytes(b"#!/bin/bash\necho my own status line\n")
+    migrated, changed = migrate_user_settings({"statusLine": SCAFFOLD}, None, legacy)
+    assert not changed
+    assert migrated["statusLine"] == SCAFFOLD

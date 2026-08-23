@@ -79,7 +79,7 @@ This materializes `~/.claude/settings.json` with hooks pointing at `$HYDRA_URL` 
 
 Verify: `python -m hydra_cli --help` (and optionally `hydra --help` if the console shim is on PATH).
 
-`setup.sh` also scaffolds `~/.claude/settings.user.json` from `client/settings.user.template.json` on first run - this is your personal copy of the user-pref defaults (`effortLevel`, `attribution`, `statusLine`, …). Edit any value to override, or **delete a field to fall back to the template default**. For example, drop the `statusLine` block to use Claude Code's built-in status line instead of `~/.claude/statusline.sh`. The file is never overwritten after the first scaffold; your edits survive every re-run. See [client/README.md](client/README.md) for the full layering model.
+`setup.sh` also scaffolds `~/.claude/settings.user.json` from `client/settings.user.template.json` on first run - this is your personal copy of the user-pref defaults (`effortLevel`, `attribution`, `statusLine`, …). Edit any value to override, or **delete a field to fall back to the template default**. For example, drop `effortLevel` to follow the shipped default as it changes over time. (Deleting a field restores the *template* default, not Claude Code's built-in - so to run your own status line, keep the `statusLine` block and point its `command` at your own script, e.g. `~/.claude/statusline.sh`, a path Hydra never writes.) The file is never overwritten after the first scaffold; your edits survive every re-run. See [client/README.md](client/README.md) for the full layering model.
 
 ## 4. Register your projects
 

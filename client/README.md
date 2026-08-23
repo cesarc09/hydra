@@ -8,7 +8,8 @@ Shared Claude Code configuration - personal rules and hook settings synced acros
 |------|---------|
 | `settings.json` | Hydra hooks template (HTTP hooks + sync commands; `__HYDRA_URL__` placeholder) |
 | `settings.user.template.json` | Default user preferences (`effortLevel`, `attribution`, `statusLine`, …) |
-| `statusline.sh` | Default Claude Code status-line script (context-window progress bar) |
+| `hydra_statusline.sh` | Status-line launcher installed to `~/.claude/hydra_statusline.sh` (Hydra-owned - overwritten on every run) |
+| `hydra_statusline.py` | Status-line renderer: context bar, 250k split warning, prompt-cache countdown |
 | `setup.sh` | Pip-installs `hydra_cli` and renders `~/.claude/settings.json` from the layers above |
 
 ## How Claude Code loads configuration
@@ -53,7 +54,26 @@ layers override earlier ones (so your overrides beat every template).
 Edit `~/.claude/settings.user.json`:
 
 - **Change a value** - your value wins on the next render.
-- **Delete a field** - falls back to the template default. This is how to opt out of a default you don't want without removing it from the shipped template (which would affect everyone else). For example, drop the `statusLine` block to use Claude Code's built-in status line instead of `~/.claude/statusline.sh`.
+- **Delete a field** - falls back to the template default. This is how to stop pinning a value you no longer want to override, without removing it from the shipped template (which would affect everyone else). For example, drop `effortLevel` to follow the shipped default as it changes.
+
+### Customizing the status line
+
+`~/.claude/hydra_statusline.sh` and `~/.claude/hydra_statusline.py` are
+**Hydra's**: every `setup.sh` run overwrites them unconditionally, which is what
+lets a fix reach every machine on the next session. Editing them is pointless -
+your changes are gone on the next run, and no backup is taken.
+
+To run your own, put it at `~/.claude/statusline.sh` (or anywhere else) and
+point `statusLine.command` at it in `~/.claude/settings.user.json`:
+
+```json
+{ "statusLine": { "type": "command", "command": "~/.claude/statusline.sh" } }
+```
+
+Hydra never reads or writes that path, so your script is safe there and no
+backups are needed - the `hydra_` prefix exists precisely so the managed pair
+can never collide with it. That override wins over the shipped default; delete
+the `statusLine` block again to fall back to Hydra's status line.
 
 `~/.claude/settings.user.json` is never overwritten after the initial scaffold -
 your edits survive every `setup.sh` re-run. Format migrations are the one
