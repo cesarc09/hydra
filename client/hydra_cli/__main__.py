@@ -5,13 +5,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
+from pathlib import Path
 
 from hydra_cli import api
 from hydra_cli.apply_settings import cmd_apply_settings
 from hydra_cli.commands import run_pull
 from hydra_cli.hooks import run_pull as run_hooks_pull
-from hydra_cli.remote import cmd_capture_remote_url
+from hydra_cli.remote import cmd_capture_remote_url, scan_bridge_records
 from hydra_cli.sync import cmd_sync, fetch_server_memories, resolve_project_slug
 from hydra_cli.usage import cmd_report as _run_usage_report
 from hydra_cli.usage import run_backfill
@@ -398,6 +400,36 @@ def cmd_usage_summary(args: argparse.Namespace) -> None:
         print(f"\n  unpriced models: {', '.join(data['unpriced_models'])}")
 
 
+def _newest_transcript() -> Path | None:
+    """Most recently modified transcript on this machine, for doctor's local check."""
+    base = Path.home() / ".claude" / "projects"
+    if not base.is_dir():
+        return None
+    files = list(base.glob("*/*.jsonl"))
+    return max(files, key=lambda f: f.stat().st_mtime) if files else None
+
+
+def _claude_code_version() -> str | None:
+    """Last `version` stamped into the newest transcript.
+
+    Substring scan, not a JSON parse: transcripts run to tens of MB and doctor
+    only needs the value to name a version in a future drift report.
+    """
+    newest = _newest_transcript()
+    if newest is None:
+        return None
+    found = None
+    try:
+        with open(newest, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = re.search(r'"version":"([0-9][^"]*)"', line)
+                if m:
+                    found = m.group(1)
+    except OSError:
+        return None
+    return found
+
+
 def cmd_doctor(args: argparse.Namespace) -> None:
     """Deterministic instance diagnostics: connectivity, auth, stats, and data
     anomalies. Prints a compact report and exits 0 - status lives in the text,
@@ -462,7 +494,43 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     if by_proj:
         out.append("top:       " + ", ".join(f"{s} {c}" for s, c in by_proj.most_common(5)))
 
-    # 4. Anomaly checks (corpus invariants).
+    # 4. Remote Control URL capture.
+    out.append("")
+    out.append(f"remote control:  (Claude Code {_claude_code_version() or 'unknown'})")
+    instance = os.environ.get("HYDRA_INSTANCE_ID", "").strip()
+    s_status, s_body = api.get("/api/sessions")
+    if s_status != 200:
+        out.append(f"  [WARN] cannot list sessions (HTTP {s_status})")
+    else:
+        # SessionEnd clears the URL, so ended sessions are not a valid denominator.
+        live = [
+            x for x in json.loads(s_body)
+            if x.get("status") != "ended"
+            and (not instance or x.get("instance_id") == instance)
+        ]
+        got = sum(1 for x in live if x.get("remote_control_url"))
+        scope = f"instance {instance}" if instance else "all instances"
+        out.append(f"  server:  {got}/{len(live)} live sessions have a URL ({scope})")
+
+    newest = _newest_transcript()
+    if newest is None:
+        out.append("  local:   no transcripts under ~/.claude/projects")
+    else:
+        scan = scan_bridge_records(str(newest))
+        if not scan.records:
+            out.append("  local:   newest transcript has no bridge records"
+                       " (VS Code, or Remote Control never connected)")
+        elif scan.url:
+            out.append(f"  local:   newest transcript OK"
+                       f" ({scan.records} bridge records -> URL derived)")
+        elif scan.cleared:
+            out.append(f"  local:   newest transcript disconnected cleanly"
+                       f" ({scan.records} bridge records)")
+        else:
+            out.append(f"  [WARN] newest transcript has {scan.records} bridge records"
+                       " but no URL derives - transcript shape drift")
+
+    # 5. Anomaly checks (corpus invariants).
     slugs = {p["slug"] for p in proj}
     pinned_global = [
         f"#{m['id']} {m['name']} (project={m['project_slug']})"

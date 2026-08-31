@@ -115,8 +115,8 @@ Claude Code's **Remote Control** feature lets you reach a running session from t
 
 How Hydra picks up the URL depends on how you run Claude Code:
 
-- **Terminal (`claude` CLI):** the Stop hook scans the session transcript for the `bridge_status` event the CLI writes when `/remote-control` is active and PUTs the URL to Hydra automatically. No paste needed.
-- **VS Code panel:** the extension doesn't write `bridge_status` to the transcript, so auto-capture is a no-op there. Each session card on the dashboard has a field to paste the `https://claude.ai/code/session_...` URL once per session.
+- **Terminal (`claude` CLI):** Remote Control is on by default, and the Stop hook reads the bridge record the CLI writes into the session transcript, then PUTs the URL to Hydra automatically. No paste needed.
+- **VS Code panel:** the extension writes no bridge record to the transcript, so auto-capture is a no-op there. Each session card on the dashboard has a field to paste the `https://claude.ai/code/session_...` URL once per session.
 
 Either way, the card's "Open Remote Control" button deep-links to the right session from your phone.
 

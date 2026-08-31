@@ -29,13 +29,31 @@ def test_doctor_healthy_with_anomalies(monkeypatch, capsys):
         # orphan: pinned to a slug not in the registry
         {"id": 4, "name": "orphan", "type": "project", "project_slug": "gone"},
     ]
+    sessions = [
+        {"session_id": "a", "status": "active", "instance_id": "pi",
+         "remote_control_url": "https://claude.ai/code/session_Abc123"},
+        {"session_id": "b", "status": "idle", "instance_id": "pi",
+         "remote_control_url": None},
+        # ended sessions have their URL cleared by SessionEnd, so they are not
+        # a valid denominator and must be excluded
+        {"session_id": "c", "status": "ended", "instance_id": "pi",
+         "remote_control_url": None},
+        # another machine's session must not be counted for this instance
+        {"session_id": "d", "status": "active", "instance_id": "laptop",
+         "remote_control_url": None},
+    ]
     responses = {
         "/api/health": (200, json.dumps({"status": "ok", "db": "ok"})),
         "/api/projects": (200, json.dumps(projects)),
         "/api/memory": (200, json.dumps(memories)),
+        "/api/sessions": (200, json.dumps(sessions)),
     }
     monkeypatch.setattr(api, "get", _fake_get(responses))
     monkeypatch.setenv("HYDRA_AUTH_TOKEN", "x")
+    monkeypatch.setenv("HYDRA_INSTANCE_ID", "pi")
+    # Keep the local half of the Remote Control check off this machine's corpus.
+    monkeypatch.setattr(cli, "_newest_transcript", lambda: None)
+    monkeypatch.setattr(cli, "_claude_code_version", lambda: "2.1.251")
 
     cli.cmd_doctor(argparse.Namespace())
     out = capsys.readouterr().out
@@ -51,6 +69,9 @@ def test_doctor_healthy_with_anomalies(monkeypatch, capsys):
     assert "#4 orphan" in out
     assert "[WARN] projects with no registered path: 1 - ghost" in out
     assert "[WARN] projects pending review" in out
+    assert "remote control:  (Claude Code 2.1.251)" in out
+    assert "server:  1/2 live sessions have a URL (instance pi)" in out
+    assert "local:   no transcripts under ~/.claude/projects" in out
 
 
 def test_doctor_server_down(monkeypatch, capsys):

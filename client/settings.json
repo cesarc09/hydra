@@ -101,7 +101,7 @@
           },
           {
             "type": "command",
-            "command": "python -m hydra_cli capture-remote-url 2>/dev/null || true",
+            "command": "python -m hydra_cli capture-remote-url; [ $? = 1 ] && exit 1; exit 0",
             "timeout": 5
           },
           {
