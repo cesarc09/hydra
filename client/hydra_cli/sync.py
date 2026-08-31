@@ -698,7 +698,9 @@ def run_sync(
 
 
 def cmd_sync(args: argparse.Namespace) -> None:
-    cwd = args.cwd or os.getcwd()
+    # CLAUDE_PROJECT_DIR is the session's launch dir and stays put; $PWD/getcwd
+    # follow the model's `cd` and would auto-register subdirs as projects.
+    cwd = args.cwd or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
     do_pull = not args.push
     do_push = not args.pull
     exit_code = run_sync(cwd, do_pull=do_pull, do_push=do_push, dry_run=args.dry_run)

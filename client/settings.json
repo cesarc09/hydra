@@ -11,7 +11,7 @@
           },
           {
             "type": "command",
-            "command": "python -m hydra_cli sync --pull --cwd \"$PWD\" >/dev/null 2>&1 || true",
+            "command": "python -m hydra_cli sync --pull --cwd \"${CLAUDE_PROJECT_DIR:-$PWD}\" >/dev/null 2>&1 || true",
             "timeout": 5
           },
           {
@@ -96,7 +96,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -m hydra_cli sync --push --cwd \"$PWD\" >/dev/null 2>&1 || true",
+            "command": "python -m hydra_cli sync --push --cwd \"${CLAUDE_PROJECT_DIR:-$PWD}\" >/dev/null 2>&1 || true",
             "timeout": 5
           },
           {

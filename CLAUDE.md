@@ -133,6 +133,8 @@ tests/
   test_health.py      - /api/health probe (200 + DB ok; reachable without auth)
   test_doctor.py      - `hydra doctor` report (stats aggregation + anomaly checks, mocked api)
   test_session_archive.py - Archive endpoints + auto-unarchive on new activity
+  test_session_cwd.py - Hook + CLI cwd pinning: CLAUDE_PROJECT_DIR beats a drifted
+                        $PWD, fallback retained (parses the shipped hook commands)
   test_statusline.py  - Status-line render: bar, 250k SPLIT gate, cache countdown
   test_startup.py     - Fail-closed startup guard
   test_usage.py       - /api/usage ingest idempotence (replay, cross-session id, no FK)
