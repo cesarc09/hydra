@@ -43,6 +43,7 @@ from typing import Any
 from urllib.parse import quote
 
 from hydra_cli import api
+from hydra_cli.paths import is_contained_by, path_shape
 
 GLOBAL_TYPES = {"user", "feedback"}
 PROJECT_TYPES = {"project", "reference"}
@@ -228,11 +229,9 @@ def resolve_project_slug(cwd: str, *, auto_attach: bool = True) -> str | None:
     at different filesystem paths on different machines, and the cwd itself
     is unambiguous enough that instance_id scoping is unnecessary here.
 
-    If no registered path matches and `auto_attach` is set, defers to the
-    server's `/api/projects/auto-register` endpoint, which applies a stoplist
-    and either creates a brand-new slug, attaches this machine to an existing
-    one, or skips with a reason. Auto-registered entries are flagged in the
-    DB so the dashboard can surface them for review.
+    A read-only lookup falls back to the deepest confirmed ancestor. If
+    `auto_attach` is set instead, the server owns containment and registration
+    through `/api/projects/auto-register`.
     """
     status, body = api.get("/api/projects")
     if status != 200:
@@ -245,7 +244,22 @@ def resolve_project_slug(cwd: str, *, auto_attach: bool = True) -> str | None:
                 return p["slug"]
 
     if not auto_attach:
-        return None
+        matches = [
+            (p["slug"], entry["path"])
+            for p in projects
+            if p.get("auto_registered_at") is None
+            for entry in p.get("paths", [])
+            if is_contained_by(target, entry["path"])
+        ]
+        if not matches:
+            return None
+        deepest = max(len(path_shape(path)[1]) for _, path in matches)
+        slugs = {
+            slug
+            for slug, path in matches
+            if len(path_shape(path)[1]) == deepest
+        }
+        return slugs.pop() if len(slugs) == 1 else None
 
     return _auto_register(target)
 

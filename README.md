@@ -108,6 +108,12 @@ python -m hydra_cli memory list [--all|--project SLUG|--global] [--json]
                       # --json returns full rows with bodies.
 python -m hydra_cli memory get ID | create ... | update ID ... | delete ID
 python -m hydra_cli project list | get SLUG | create --slug --path | update SLUG | delete
+python -m hydra_cli project prune [--apply]
+                      # Propose registry cleanup: deletes only projects whose
+                      # every path is contained by a confirmed project or hit by
+                      # a rejection rule, and which hold no pinned memories.
+                      # Dry-run unless --apply. Slug twins are reported as merge
+                      # candidates, never merged.
 python -m hydra_cli config get-claude-md | put-claude-md FILE
 python -m hydra_cli commands pull | put NAME FILE | get NAME | list | delete NAME
                       # Slash commands. `pull` is the SessionStart hook; the

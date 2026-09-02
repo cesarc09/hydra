@@ -13,6 +13,7 @@ from hydra_cli import api
 from hydra_cli.apply_settings import cmd_apply_settings
 from hydra_cli.commands import run_pull
 from hydra_cli.hooks import run_pull as run_hooks_pull
+from hydra_cli.prune import cmd_project_prune
 from hydra_cli.remote import cmd_capture_remote_url, scan_bridge_records
 from hydra_cli.sync import cmd_sync, fetch_server_memories, resolve_project_slug
 from hydra_cli.usage import cmd_report as _run_usage_report
@@ -645,6 +646,20 @@ def build_parser() -> argparse.ArgumentParser:
     pa.add_argument("--slug", help="target slug (defaults to cwd basename)")
     pa.add_argument("--cwd", help="path to attach (defaults to current dir)")
 
+    pp = proj_sub.add_parser(
+        "prune", help="report registry cleanup candidates (dry-run by default)"
+    )
+    pp_mode = pp.add_mutually_exclusive_group()
+    pp_mode.add_argument(
+        "--dry-run", dest="apply", action="store_false",
+        help="report only (default)",
+    )
+    pp_mode.add_argument(
+        "--apply", action="store_true",
+        help="delete eligible projects after a fresh memory check",
+    )
+    pp.set_defaults(apply=False)
+
     # --- config ---
     cfg = sub.add_parser("config")
     cfg_sub = cfg.add_subparsers(dest="command")
@@ -763,6 +778,7 @@ DISPATCH = {
     ("project", "update"): cmd_project_update,
     ("project", "delete"): cmd_project_delete,
     ("project", "attach"): cmd_project_attach,
+    ("project", "prune"): cmd_project_prune,
     ("config", "get-claude-md"): cmd_config_get_claude_md,
     ("config", "put-claude-md"): cmd_config_put_claude_md,
     ("commands", "pull"): cmd_commands_pull,

@@ -125,6 +125,45 @@ def test_unregistered_cwd_falls_back_to_globals(
     assert "No project registered" in out.err
 
 
+def test_contained_cwd_scopes_to_confirmed_parent(
+    api, capsys, monkeypatch: pytest.MonkeyPatch
+):
+    api.projects = [{
+        "slug": "ars",
+        "auto_registered_at": None,
+        "paths": [{"instance_id": "test", "path": "/test/proj"}],
+    }]
+    monkeypatch.setattr(main_mod.os, "getcwd", lambda: "/test/proj/src")
+
+    run()
+
+    out = capsys.readouterr()
+    assert ids(out.out) == [1, 2, 4]
+    assert "3 memories (ars + global)" in out.err
+    assert api.posts == []
+
+
+def test_equal_depth_containment_ambiguity_falls_back_to_globals(
+    api, capsys, monkeypatch: pytest.MonkeyPatch
+):
+    api.projects = [
+        {
+            "slug": slug,
+            "auto_registered_at": None,
+            "paths": [{"instance_id": "test", "path": "/test/proj"}],
+        }
+        for slug in ("alpha", "beta")
+    ]
+    monkeypatch.setattr(main_mod.os, "getcwd", lambda: "/test/proj/src")
+
+    run()
+
+    out = capsys.readouterr()
+    assert ids(out.out) == [1, 4]
+    assert "No project registered" in out.err
+    assert api.posts == []
+
+
 def test_json_keeps_full_rows(api, resolver, capsys):
     run("--json")
     rows = json.loads(capsys.readouterr().out)
