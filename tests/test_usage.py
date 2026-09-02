@@ -166,6 +166,108 @@ async def test_project_registered_on_two_machines_does_not_double_count(client):
     assert body["rows"][0]["messages"] == 1
 
 
+async def test_project_group_uses_confirmed_ancestor(client):
+    await client.post(
+        "/api/projects",
+        json={"slug": "hydra", "path": "/work/demo"},
+        headers={"X-Instance-Id": "pi"},
+    )
+    await _post(client, "s1", [_msg("m1", cwd="/work/demo/server")])
+
+    body = (await client.get("/api/usage/summary?group_by=project")).json()
+    assert [(row["key"], row["messages"]) for row in body["rows"]] == [("hydra", 1)]
+
+
+async def test_project_group_uses_longest_confirmed_ancestor(client):
+    for slug, path in (
+        ("outer", "/work/repo"),
+        ("inner", "/work/repo/packages/app"),
+    ):
+        await client.post(
+            "/api/projects",
+            json={"slug": slug, "path": path},
+            headers={"X-Instance-Id": slug},
+        )
+    await _post(client, "s1", [_msg("m1", cwd="/work/repo/packages/app/src")])
+
+    body = (await client.get("/api/usage/summary?group_by=project")).json()
+    assert [row["key"] for row in body["rows"]] == ["inner"]
+
+
+async def test_project_group_exact_match_beats_confirmed_ancestor(client):
+    auto = await client.post(
+        "/api/projects/auto-register",
+        json={"cwd": "/work/repo/sub"},
+        headers={"X-Instance-Id": "auto"},
+    )
+    assert auto.json()["status"] == "created"
+    await client.post(
+        "/api/projects",
+        json={"slug": "repo", "path": "/work/repo"},
+        headers={"X-Instance-Id": "manual"},
+    )
+    await _post(client, "s1", [_msg("m1", cwd="/work/repo/sub")])
+
+    body = (await client.get("/api/usage/summary?group_by=project")).json()
+    assert [row["key"] for row in body["rows"]] == ["sub"]
+
+
+async def test_unconfirmed_path_does_not_capture_usage(client):
+    auto = await client.post(
+        "/api/projects/auto-register",
+        json={"cwd": "/work/junk"},
+        headers={"X-Instance-Id": "auto"},
+    )
+    assert auto.json()["status"] == "created"
+    await client.post(
+        "/api/projects",
+        json={"slug": "work", "path": "/work"},
+        headers={"X-Instance-Id": "manual"},
+    )
+    await _post(client, "s1", [_msg("m1", cwd="/work/junk/src")])
+
+    body = (await client.get("/api/usage/summary?group_by=project")).json()
+    assert [row["key"] for row in body["rows"]] == ["work"]
+
+
+async def test_project_prefix_does_not_treat_underscore_as_wildcard(client):
+    await client.post(
+        "/api/projects",
+        json={"slug": "proj_a", "path": "/home/u/proj_a"},
+        headers={"X-Instance-Id": "pi"},
+    )
+    await _post(client, "s1", [_msg("m1", cwd="/home/u/projXa/src")])
+
+    body = (await client.get("/api/usage/summary?group_by=project")).json()
+    assert [row["key"] for row in body["rows"]] == ["unregistered"]
+
+
+async def test_unrelated_usage_stays_unregistered(client):
+    await client.post(
+        "/api/projects",
+        json={"slug": "hydra", "path": "/work/hydra"},
+        headers={"X-Instance-Id": "pi"},
+    )
+    await _post(client, "s1", [_msg("m1", cwd="/elsewhere/repo")])
+
+    body = (await client.get("/api/usage/summary?group_by=project")).json()
+    assert [row["key"] for row in body["rows"]] == ["unregistered"]
+
+
+async def test_duplicate_prefixes_do_not_fan_out_usage(client):
+    for slug, instance in (("alpha", "a"), ("beta", "b")):
+        await client.post(
+            "/api/projects",
+            json={"slug": slug, "path": "/work/repo"},
+            headers={"X-Instance-Id": instance},
+        )
+    await _post(client, "s1", [_msg("m1", cwd="/work/repo/src")])
+
+    body = (await client.get("/api/usage/summary?group_by=project")).json()
+    assert [(row["key"], row["messages"]) for row in body["rows"]] == [("alpha", 1)]
+    assert body["totals"]["messages"] == 1
+
+
 async def test_group_by_agent_and_instance(client):
     await _post(client, "s1", [_msg("m1")], instance="pi")
     await _post(client, "s2", [

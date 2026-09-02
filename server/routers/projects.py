@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from server.auth import require_auth
 from server.db import get_db
@@ -12,7 +12,7 @@ from server.models import (
     ProjectPath,
     ProjectUpdate,
 )
-from server.services.slug import derive_slug_from_cwd
+from server.services.slug import derive_slug_from_cwd, is_contained_by, path_shape
 
 router = APIRouter(
     prefix="/api/projects", tags=["projects"], dependencies=[Depends(require_auth)]
@@ -134,11 +134,35 @@ async def update_project(slug: str, update: ProjectUpdate) -> ProjectItem:
 
 
 @router.delete("/{slug}", status_code=204)
-async def delete_project(slug: str):
+async def delete_project(slug: str, force: bool = Query(default=False)):
     db = await get_db()
-    cursor = await db.execute("DELETE FROM projects WHERE slug = ?", (slug,))
-    if cursor.rowcount == 0:
+    # Check before issuing any DML. get_db() is a process-wide connection, so a
+    # rollback on a failure path would also discard another request's
+    # uncommitted write; SELECT-only failure paths open no transaction.
+    rows = list(await db.execute_fetchall(
+        "SELECT 1 FROM projects WHERE slug = ?", (slug,)
+    ))
+    if not rows:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    if force:
+        await db.execute("DELETE FROM projects WHERE slug = ?", (slug,))
+    else:
+        pinned = list(await db.execute_fetchall(
+            "SELECT 1 FROM memories WHERE project_slug = ? LIMIT 1", (slug,)
+        ))
+        if pinned:
+            raise HTTPException(
+                status_code=409,
+                detail="Project still has pinned memories; pass force=true to delete",
+            )
+        # NOT EXISTS is kept as a guard: if a memory is pinned between the
+        # check and here, the delete becomes a no-op rather than unpinning it.
+        await db.execute(
+            "DELETE FROM projects WHERE slug = ?"
+            " AND NOT EXISTS (SELECT 1 FROM memories WHERE project_slug = ?)",
+            (slug, slug),
+        )
     await db.commit()
 
 
@@ -166,7 +190,8 @@ async def auto_register(
     SessionStart so new projects appear in the registry without manual setup.
 
     Server-side policy:
-    - If (instance_id, cwd) is already registered, return its slug.
+    - Resolve exact paths on this instance, then across all instances.
+    - Resolve descendants against confirmed project paths without writing.
     - Otherwise derive a slug from the cwd basename. If the basename hits the
       stoplist or normalizes to nothing usable, return `skipped` with a reason
       and don't write anything.
@@ -179,13 +204,42 @@ async def auto_register(
     db = await get_db()
     cwd = body.cwd
 
-    # Already registered?
+    # One fetch; exact matching is compared by shape rather than SQL string
+    # equality, so `C:\Work\Repo` and `c:/work/repo` resolve to the same row
+    # instead of falling through and minting a peer project.
     rows = list(await db.execute_fetchall(
-        "SELECT slug FROM project_paths WHERE instance_id = ? AND path = ?",
-        (x_instance_id, cwd),
+        "SELECT pp.slug, pp.instance_id, pp.path,"
+        " (p.auto_registered_at IS NULL) AS confirmed"
+        " FROM project_paths pp JOIN projects p ON p.slug = pp.slug"
+        " ORDER BY pp.slug"
     ))
-    if rows:
-        return AutoRegisterResponse(status="existing", slug=rows[0]["slug"])
+    target = path_shape(cwd)
+    same = [row for row in rows if path_shape(row["path"]) == target]
+
+    # Already registered on this instance?
+    here = [row for row in same if row["instance_id"] == x_instance_id]
+    if here:
+        return AutoRegisterResponse(status="existing", slug=here[0]["slug"])
+
+    # Exact paths on another instance still identify the same project.
+    if same:
+        best = min(same, key=lambda row: (not row["confirmed"], row["slug"]))
+        return AutoRegisterResponse(status="existing", slug=best["slug"])
+
+    anchors = [row for row in rows if row["confirmed"]]
+    matches = [row for row in anchors if is_contained_by(cwd, row["path"])]
+    if matches:
+        deepest = max(len(path_shape(row["path"])[1]) for row in matches)
+        slugs = {
+            row["slug"]
+            for row in matches
+            if len(path_shape(row["path"])[1]) == deepest
+        }
+        if len(slugs) > 1:
+            return AutoRegisterResponse(
+                status="skipped", reason="ambiguous ancestors"
+            )
+        return AutoRegisterResponse(status="contained", slug=slugs.pop())
 
     slug, reason = derive_slug_from_cwd(cwd)
     if slug is None:

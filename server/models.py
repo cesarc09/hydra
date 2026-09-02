@@ -159,12 +159,13 @@ class AutoRegisterRequest(BaseModel):
 
 class AutoRegisterResponse(BaseModel):
     """Status values:
-    - "existing": cwd was already registered for this (slug, instance_id).
+    - "existing": cwd matched a registered path, on this or another instance.
+    - "contained": cwd is below a confirmed project's registered path.
     - "attached": slug already existed; this machine's path was added.
     - "created": brand-new slug; project + path both created.
-    - "skipped": stoplist rejected the derived slug; no write happened.
+    - "skipped": path policy rejected the cwd; no write happened.
     """
-    status: Literal["existing", "attached", "created", "skipped"]
+    status: Literal["existing", "contained", "attached", "created", "skipped"]
     slug: str | None = None
     reason: str | None = None
 

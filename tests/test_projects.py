@@ -166,6 +166,29 @@ async def test_delete_nonexistent_returns_404(client: AsyncClient):
     assert res.status_code == 404
 
 
+async def test_delete_project_with_pinned_memory_requires_force(client: AsyncClient):
+    await _create_project(client)
+    memory = await client.post("/api/memory", json={
+        "name": "project note",
+        "type": "project",
+        "project_slug": "hydra",
+    })
+    assert memory.status_code == 200
+
+    blocked = await client.delete("/api/projects/hydra")
+    assert blocked.status_code == 409
+    assert (await client.get("/api/projects/hydra")).status_code == 200
+    assert (await client.get(f"/api/memory/{memory.json()['id']}")).json()[
+        "project_slug"
+    ] == "hydra"
+
+    forced = await client.delete("/api/projects/hydra?force=true")
+    assert forced.status_code == 204
+    assert (await client.get(f"/api/memory/{memory.json()['id']}")).json()[
+        "project_slug"
+    ] is None
+
+
 # --- Auth ---
 
 
@@ -231,6 +254,167 @@ async def test_auto_register_idempotent_on_existing_path(client: AsyncClient):
     assert second.status_code == 200
     assert second.json() == {
         "status": "existing", "slug": "foo", "reason": None,
+    }
+
+
+async def test_auto_register_contained_cwd_writes_no_path(client: AsyncClient):
+    await _create_project(client, path="/srv/hydra")
+    res = await _auto_register(client, "/srv/hydra/server/services")
+
+    assert res.json() == {
+        "status": "contained", "slug": "hydra", "reason": None,
+    }
+    project = (await client.get("/api/projects/hydra")).json()
+    assert project["paths"] == [{
+        "instance_id": "host-1",
+        "path": "/srv/hydra",
+        "auto_registered_at": None,
+    }]
+
+
+async def test_auto_register_exact_across_instances_beats_containment(
+    client: AsyncClient,
+):
+    await _create_project(
+        client, slug="outer", path="/work/outer-repo", instance_id="a"
+    )
+    await _create_project(
+        client, slug="inner", path="/work/outer-repo/inner", instance_id="a"
+    )
+
+    res = await _auto_register(client, "/work/outer-repo/inner", instance_id="b")
+
+    assert res.json() == {
+        "status": "existing", "slug": "inner", "reason": None,
+    }
+    inner = (await client.get("/api/projects/inner")).json()
+    assert [path["instance_id"] for path in inner["paths"]] == ["a"]
+
+
+async def test_auto_register_exact_prefers_confirmed_project(client: AsyncClient):
+    first = await _auto_register(client, "/srv/shared", instance_id="auto")
+    assert first.json()["status"] == "created"
+    await _create_project(
+        client, slug="confirmed", path="/srv/shared", instance_id="manual"
+    )
+
+    res = await _auto_register(client, "/srv/shared", instance_id="third")
+
+    assert res.json() == {
+        "status": "existing", "slug": "confirmed", "reason": None,
+    }
+
+
+async def test_auto_register_exact_match_is_shape_not_string(client: AsyncClient):
+    """A Windows path spelled with a different drive case or separator is the
+    same path, so it resolves instead of minting a peer project."""
+    await _create_project(
+        client, slug="winproj", path=r"C:\Work\Repo", instance_id="a"
+    )
+
+    res = await _auto_register(client, "c:/work/repo", instance_id="b")
+
+    assert res.json() == {
+        "status": "existing", "slug": "winproj", "reason": None,
+    }
+    listed = (await client.get("/api/projects")).json()
+    assert [p["slug"] for p in listed] == ["winproj"]
+
+
+async def test_auto_register_posix_exact_match_stays_case_sensitive(
+    client: AsyncClient,
+):
+    """POSIX paths are case-sensitive, so /Work/Repo is a different directory."""
+    await _create_project(
+        client, slug="posixproj", path="/Work/Repo", instance_id="a"
+    )
+
+    res = await _auto_register(client, "/work/repo", instance_id="b")
+
+    assert res.json()["status"] == "created"
+
+
+async def test_auto_register_exact_uses_lowest_unconfirmed_slug(client: AsyncClient):
+    for slug in ("zeta", "alpha"):
+        created = await _auto_register(client, f"/srv/{slug}", instance_id=slug)
+        assert created.json()["status"] == "created"
+        await _create_project(
+            client, slug=slug, path="/srv/shared", instance_id=slug
+        )
+
+    res = await _auto_register(client, "/srv/shared", instance_id="third")
+
+    assert res.json() == {
+        "status": "existing", "slug": "alpha", "reason": None,
+    }
+
+
+async def test_auto_register_deepest_confirmed_ancestor_wins(client: AsyncClient):
+    await _create_project(client, slug="outer", path="/work/repo")
+    await _create_project(client, slug="inner", path="/work/repo/packages/app")
+
+    res = await _auto_register(client, "/work/repo/packages/app/src")
+
+    assert res.json() == {
+        "status": "contained", "slug": "inner", "reason": None,
+    }
+
+
+async def test_auto_register_ambiguous_ancestors_skips_without_write(
+    client: AsyncClient,
+):
+    await _create_project(client, slug="alpha", path="/work/repo", instance_id="a")
+    await _create_project(client, slug="beta", path="/work/repo", instance_id="b")
+
+    res = await _auto_register(client, "/work/repo/src", instance_id="third")
+
+    assert res.json() == {
+        "status": "skipped", "slug": None, "reason": "ambiguous ancestors",
+    }
+    projects = (await client.get("/api/projects")).json()
+    assert [project["slug"] for project in projects] == ["alpha", "beta"]
+
+
+async def test_auto_register_unconfirmed_project_does_not_anchor(client: AsyncClient):
+    first = await _auto_register(client, "/srv/junk")
+    assert first.json()["status"] == "created"
+
+    child = await _auto_register(client, "/srv/junk/child", instance_id="other")
+
+    assert child.json() == {
+        "status": "created", "slug": "child", "reason": None,
+    }
+
+
+async def test_auto_register_containment_crosses_instances(client: AsyncClient):
+    await _create_project(
+        client, slug="shared", path="/cluster/home/u/repo", instance_id="m1"
+    )
+
+    res = await _auto_register(
+        client, "/cluster/home/u/repo/src", instance_id="m2"
+    )
+
+    assert res.json() == {
+        "status": "contained", "slug": "shared", "reason": None,
+    }
+
+
+async def test_auto_register_project_confirmation_anchors_flagged_path(
+    client: AsyncClient,
+):
+    await _create_project(client, slug="hydra", path="/srv/hydra", instance_id="linux")
+    attached = await _auto_register(
+        client, r"C:\work\hydra", instance_id="windows"
+    )
+    assert attached.json()["status"] == "attached"
+
+    res = await _auto_register(
+        client, r"C:\work\hydra\server", instance_id="windows-2"
+    )
+
+    assert res.json() == {
+        "status": "contained", "slug": "hydra", "reason": None,
     }
 
 

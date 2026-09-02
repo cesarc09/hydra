@@ -38,11 +38,21 @@ _COUNTERS = (
     "web_fetch_requests",
 )
 
-# Group-key SQL per `group_by`. `project` resolves cwd -> slug through a
-# de-duplicated view of project_paths: the table is keyed (slug, instance_id),
-# so two machines registering the same absolute path would otherwise fan the
-# join out and double-count every row. Matching is exact path equality, which
-# mirrors resolve_project_slug() in client/hydra_cli/sync.py.
+# Group-key SQL per `group_by`. Project resolution uses scalar subqueries so
+# duplicate matching paths cannot fan out usage rows.
+_PROJECT_SQL = (
+    "COALESCE("
+    " (SELECT pe.slug FROM project_paths pe"
+    "  WHERE pe.path = u.cwd ORDER BY pe.slug LIMIT 1),"
+    " (SELECT pp.slug FROM project_paths pp"
+    "  JOIN projects pr ON pr.slug = pp.slug"
+    "  WHERE pr.auto_registered_at IS NULL"
+    "   AND substr(u.cwd, 1, length(pp.path) + 1)"
+    "       IN (pp.path || '/', pp.path || '\\')"
+    "  ORDER BY length(pp.path) DESC, pp.slug LIMIT 1),"
+    " 'unregistered')"
+)
+
 _GROUP_SQL: dict[str, str] = {
     "day": "substr(u.ts, 1, 10)",
     "model": "u.model",
@@ -51,13 +61,8 @@ _GROUP_SQL: dict[str, str] = {
         "CASE WHEN u.is_subagent = 0 THEN 'main'"
         " ELSE COALESCE(u.agent_type, 'subagent') END"
     ),
-    "project": "COALESCE(pp.slug, 'unregistered')",
+    "project": _PROJECT_SQL,
 }
-
-_PROJECT_JOIN = (
-    " LEFT JOIN (SELECT path, MIN(slug) AS slug FROM project_paths GROUP BY path) pp"
-    " ON pp.path = u.cwd"
-)
 
 
 def _now() -> str:
@@ -161,7 +166,6 @@ async def usage_summary(
     """
     db = await get_db()
     key_sql = _GROUP_SQL[group_by]
-    join = _PROJECT_JOIN if group_by == "project" else ""
 
     where = []
     params: list[Any] = []
@@ -179,7 +183,7 @@ async def usage_summary(
     sums = ", ".join(f"SUM(u.{c}) AS {c}" for c in _COUNTERS)
     rows = await db.execute_fetchall(
         f"SELECT {key_sql} AS key, u.model AS model, COUNT(*) AS messages, {sums}"
-        f" FROM usage_messages u{join}{where_sql}"
+        f" FROM usage_messages u{where_sql}"
         " GROUP BY key, u.model",
         params,
     )
