@@ -46,19 +46,34 @@ def test_session_start_emits_only_json_with_small_index(
     assert calls == [("sync", "/project"), ("pull", "codex-cli")]
 
 
-@pytest.mark.parametrize("index", [None, "x" * 8000])
-def test_session_start_uses_header_when_index_missing_or_over_cap(
-    session_env, index: str | None, monkeypatch: pytest.MonkeyPatch, capsys
+def test_session_start_uses_header_when_index_missing(
+    session_env, monkeypatch: pytest.MonkeyPatch, capsys
 ):
     memory, _calls = session_env
-    if index is not None:
-        memory.mkdir()
-        (memory / "MEMORY.md").write_text(index)
     monkeypatch.setattr(codex_mod.sys, "stdin", io.StringIO("{}"))
     monkeypatch.setattr(codex_mod.os, "getcwd", lambda: "/fallback")
     assert codex_mod.run_session_start() == 0
     output = hook_output(capsys)["hookSpecificOutput"]
     assert output["additionalContext"] == f"Hydra memory index: {memory}"
+
+
+def test_session_start_truncates_an_over_cap_index_by_whole_lines(
+    session_env, monkeypatch: pytest.MonkeyPatch, capsys
+):
+    memory, _calls = session_env
+    memory.mkdir()
+    lines = [f"- [m{i}](m{i}.md) - entry {i}" for i in range(3000)]
+    (memory / "MEMORY.md").write_text("\n".join(lines) + "\n")
+    monkeypatch.setattr(codex_mod.sys, "stdin", io.StringIO("{}"))
+    monkeypatch.setattr(codex_mod.os, "getcwd", lambda: "/fallback")
+    assert codex_mod.run_session_start() == 0
+    context = hook_output(capsys)["hookSpecificOutput"]["additionalContext"]
+    assert len(context.encode()) <= codex_mod._CONTEXT_CAP
+    head, _, trailer = context.rpartition("\n\n")
+    shown = head.split("\n\n", 1)[1].split("\n")
+    assert shown == lines[: len(shown)] and 0 < len(shown) < len(lines)
+    hidden = len(lines) - len(shown)
+    assert trailer == f"(+{hidden} more lines not shown - read {memory / 'MEMORY.md'})"
 
 
 def test_session_start_survives_sync_exception_and_empty_stdin(

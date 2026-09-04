@@ -13,7 +13,10 @@ from typing import Any
 from hydra_cli.skills import codex_home, run_pull
 from hydra_cli.sync import MEMORY_INDEX, memory_dir_for_cwd, run_sync
 
-_CONTEXT_CAP = 8000
+# Codex passed an 18KB index through at its default additionalContextLimit
+# (measured 2026-09-04, 0.150.1); over the cap, whole lines are kept and the
+# remainder is counted so the agent knows to read the file.
+_CONTEXT_CAP = 32000
 _HOOKS: dict[str, tuple[str, dict[str, Any]]] = {
     "SessionStart": (
         "startup|resume|clear|compact",
@@ -49,6 +52,23 @@ def _read_cwd() -> str:
     return cwd if isinstance(cwd, str) and cwd else os.getcwd()
 
 
+def _index_context(header: str, index: Path) -> str:
+    text = index.read_text(encoding="utf-8")
+    combined = f"{header}\n\n{text}"
+    if len(combined.encode()) <= _CONTEXT_CAP:
+        return combined
+    lines = text.splitlines()
+    kept: list[str] = []
+    for shown, line in enumerate(lines, start=1):
+        trailer = f"\n\n(+{len(lines) - shown} more lines not shown - read {index})"
+        candidate = f"{header}\n\n" + "\n".join([*kept, line]) + trailer
+        if len(candidate.encode()) > _CONTEXT_CAP:
+            break
+        kept.append(line)
+    trailer = f"\n\n(+{len(lines) - len(kept)} more lines not shown - read {index})"
+    return f"{header}\n\n" + "\n".join(kept) + trailer
+
+
 def run_session_start() -> int:
     cwd = _read_cwd()
     with contextlib.redirect_stdout(sys.stderr):
@@ -67,9 +87,7 @@ def run_session_start() -> int:
     index = memory_dir / MEMORY_INDEX
     try:
         if index.is_file():
-            combined = f"{header}\n\n{index.read_text(encoding='utf-8')}"
-            if len(combined.encode()) <= _CONTEXT_CAP:
-                context = combined
+            context = _index_context(header, index)
     except (OSError, UnicodeError) as exc:
         print(f"codex-session-start: memory index read failed: {exc}", file=sys.stderr)
     print(

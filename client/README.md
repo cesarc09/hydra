@@ -46,7 +46,7 @@ bash client/setup.sh
 
 Codex skips a new or changed hook until it is trusted: open Codex once after setup and run `/hooks`. That is needed again whenever a wired command string changes.
 
-The SessionStart hook pulls the memory mirror and the `codex-cli` skills, then emits `additionalContext`: one header line naming the absolute memory dir, followed by that dir's `MEMORY.md` - or the header alone when the two together exceed 8000 bytes. Diagnostics go to stderr, so stdout carries only the hook JSON.
+The SessionStart hook pulls the memory mirror and the `codex-cli` skills, then emits `additionalContext`: one header line naming the absolute memory dir, followed by that dir's `MEMORY.md`, truncated to whole lines under 32000 bytes with a count of the lines left out and the path to read. Diagnostics go to stderr, so stdout carries only the hook JSON.
 
 Files land in `$CODEX_HOME/AGENTS.md` (instructions), `~/.agents/skills/<name>/SKILL.md` and `~/.agents/skills/<name>/agents/openai.yaml` (skills), and `~/.claude/.hydra-skills-codex-cli.json` (the state file that scopes prune to files Hydra wrote). `CODEX_HOME` is honoured wherever a Codex path is built. The memory mirror stays under `~/.claude/projects/`, shared with Claude Code.
 
