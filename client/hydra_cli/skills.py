@@ -92,21 +92,27 @@ def _frontmatter(text: str) -> tuple[list[str], int] | None:
 
 
 def _claude_skill(text: str, *, implicit: bool, path: Path) -> bytes:
-    if implicit:
-        return text.encode()
     parsed = _frontmatter(text)
     if parsed is None:
-        print(
-            f"warning: {path} has no YAML frontmatter; cannot disable implicit invocation",
-            file=sys.stderr,
-        )
+        if not implicit:
+            print(
+                f"warning: {path} has no YAML frontmatter; cannot disable implicit invocation",
+                file=sys.stderr,
+            )
         return text.encode()
     lines, end = parsed
-    if any(line.partition(":")[0].strip() == "disable-model-invocation" for line in lines[1:end]):
-        return text.encode()
     newline = "\r\n" if lines[0].endswith("\r\n") else "\n"
-    lines.insert(end, f"disable-model-invocation: true{newline}")
-    return "".join(lines).encode()
+    # The server's implicit_invocation is authoritative, so an existing key is
+    # rewritten rather than kept: a rendered SKILL.md pasted back into common.md
+    # carries the old value, and honouring it would silently invert the policy.
+    kept = [
+        line
+        for line in lines[1:end]
+        if line.partition(":")[0].strip() != "disable-model-invocation"
+    ]
+    if not implicit:
+        kept.append(f"disable-model-invocation: true{newline}")
+    return "".join([lines[0], *kept, *lines[end:]]).encode()
 
 
 def _frontmatter_fields(text: str) -> dict[str, str]:

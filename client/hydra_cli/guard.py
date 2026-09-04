@@ -20,6 +20,17 @@ _PATCH_PATH = re.compile(
     re.MULTILINE,
 )
 
+# Commands that only read. Anything else touching a mirror path is treated as a
+# write, because enumerating every mutating tool is a losing game.
+_READ_COMMANDS = frozenset(
+    {
+        "awk", "cat", "diff", "du", "file", "find", "grep", "egrep", "fgrep",
+        "head", "less", "ls", "more", "rg", "sed", "stat", "tail", "wc",
+    }
+)
+_INPLACE = ("-i", "--in-place")
+_REDIRECTS = frozenset({">", ">>", ">|", "<>"})
+
 _GENERIC_REASON = (
     "Memory writes belong to a human-gated flow and are refused mid-session. "
     "The CLI accepts `--flow <name>` only from that flow. Park the fact in the "
@@ -46,6 +57,19 @@ def _resolve_path(raw: str, cwd: Path) -> Path:
     if not path.is_absolute():
         path = cwd / path
     return path.resolve()
+
+
+def _expand(raw: str, cwd: Path, home: Path) -> Path | None:
+    """Resolve a shell word to a path. shlex does not expand ~, and the tilde form
+    is how a mirror path is usually typed, so it is expanded against `home`."""
+    if raw == "~":
+        raw = str(home)
+    elif raw.startswith("~/"):
+        raw = str(home) + raw[1:]
+    try:
+        return _resolve_path(raw, cwd)
+    except (OSError, ValueError):
+        return None
 
 
 def _is_memory_target(path: Path, env: Mapping[str, str], home: Path) -> bool:
@@ -120,14 +144,51 @@ def _is_memory_command(words: list[str]) -> bool:
     return False
 
 
-def _guard_bash(command: str, env: Mapping[str, str]) -> str | None:
+def _writes_memory_path(
+    words: list[str], env: Mapping[str, str], cwd: Path, home: Path
+) -> bool:
+    """Best-effort: a mirror path as an operand of anything but a reader, or as a
+    redirect target of anything at all. A path hidden inside a quoted program
+    string (`python -c "open(...)"`) is one token and stays invisible - this is a
+    tripwire against drift, not a sandbox."""
+    while words and _ASSIGNMENT.fullmatch(words[0]):
+        words = words[1:]
+    if not words:
+        return False
+
+    for index, word in enumerate(words):
+        if word in _REDIRECTS and index + 1 < len(words):
+            target = _expand(words[index + 1], cwd, home)
+            if target is not None and _is_memory_target(target, env, home):
+                return True
+
+    name = _basename(words[0])
+    in_place = name == "sed" and any(w.startswith(_INPLACE) for w in words[1:])
+    if name in _READ_COMMANDS and not in_place:
+        return False
+
+    for word in words[1:]:
+        if word in _REDIRECTS or word.startswith("-"):
+            continue
+        target = _expand(word, cwd, home)
+        if target is not None and _is_memory_target(target, env, home):
+            return True
+    return False
+
+
+def _guard_bash(
+    command: str, env: Mapping[str, str], *, cwd: Path, home: Path
+) -> str | None:
     try:
         commands = _simple_commands(command)
     except ValueError:
-        if "memory" in command and ("hydra" in command or "hydra_cli" in command):
+        ambiguous = "hydra" in command or "hydra_cli" in command or "/memory/" in command
+        if "memory" in command and ambiguous:
             return _reason(env, _AMBIGUOUS_PREFIX)
         return None
     if any(_is_memory_command(words) for words in commands):
+        return _reason(env)
+    if any(_writes_memory_path(words, env, cwd, home) for words in commands):
         return _reason(env)
     return None
 
@@ -169,7 +230,9 @@ def run_guard(stdin_text: str, env: Mapping[str, str], *, home: Path) -> str | N
 
     if tool_name == "Bash":
         command = tool_input.get("command")
-        return _guard_bash(command, env) if isinstance(command, str) else None
+        if not isinstance(command, str):
+            return None
+        return _guard_bash(command, env, cwd=cwd, home=home.resolve())
     return None
 
 

@@ -129,18 +129,22 @@ async def delete_skill(name: str):
 @router.get("/{harness}")
 async def get_skills(harness: str) -> dict[str, dict]:
     _check_name(harness, "harness")
-    db = await get_db()
-    rows = await db.execute_fetchall(
-        """SELECT s.name, s.kind, s.enabled, s.implicit_invocation, s.instances,
-                  common.body, harness.body
-           FROM skills s
-           JOIN skill_variants common
-             ON common.name = s.name AND common.variant = 'common'
-           LEFT JOIN skill_variants harness
-             ON harness.name = s.name AND harness.variant = ?
-           ORDER BY s.name""",
-        (harness,),
-    )
+    # Readers share the writers' connection, so an unlocked SELECT lands inside a
+    # publish's open transaction and can miss a skill between its DELETE and commit.
+    # A client that sees a nonempty response minus one skill prunes that skill's files.
+    async with SKILLS_WRITE_LOCK:
+        db = await get_db()
+        rows = await db.execute_fetchall(
+            """SELECT s.name, s.kind, s.enabled, s.implicit_invocation, s.instances,
+                      common.body, harness.body
+               FROM skills s
+               JOIN skill_variants common
+                 ON common.name = s.name AND common.variant = 'common'
+               LEFT JOIN skill_variants harness
+                 ON harness.name = s.name AND harness.variant = ?
+               ORDER BY s.name""",
+            (harness,),
+        )
     result = {}
     for row in rows:
         rendered = render(row[5], _decode_slots(row[6]))
@@ -159,19 +163,20 @@ async def get_skills(harness: str) -> dict[str, dict]:
 async def get_skill(name: str, harness: str):
     _check_name(name, "skill")
     _check_name(harness, "harness")
-    db = await get_db()
-    rows = list(
-        await db.execute_fetchall(
-            """SELECT s.kind, common.body, harness.body
-               FROM skills s
-               JOIN skill_variants common
-                 ON common.name = s.name AND common.variant = 'common'
-               LEFT JOIN skill_variants harness
-                 ON harness.name = s.name AND harness.variant = ?
-               WHERE s.name = ?""",
-            (harness, name),
+    async with SKILLS_WRITE_LOCK:
+        db = await get_db()
+        rows = list(
+            await db.execute_fetchall(
+                """SELECT s.kind, common.body, harness.body
+                   FROM skills s
+                   JOIN skill_variants common
+                     ON common.name = s.name AND common.variant = 'common'
+                   LEFT JOIN skill_variants harness
+                     ON harness.name = s.name AND harness.variant = ?
+                   WHERE s.name = ?""",
+                (harness, name),
+            )
         )
-    )
     if not rows:
         raise HTTPException(status_code=404, detail="Skill not found")
     row = rows[0]

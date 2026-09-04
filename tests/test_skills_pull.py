@@ -69,6 +69,7 @@ def test_claude_instructions_and_invocation_frontmatter(pull_env):
             "---\nname: Existing\ndisable-model-invocation: false\n---\nBody\n",
             implicit=False,
         ),
+        "stale": row("---\nname: Stale\ndisable-model-invocation: true\n---\nBody\n"),
     }
 
     assert skills_mod.run_pull("claude-code") == 0
@@ -78,9 +79,14 @@ def test_claude_instructions_and_invocation_frontmatter(pull_env):
     assert "disable-model-invocation" not in (
         claude / "skills" / "implicit" / "SKILL.md"
     ).read_text()
-    assert (
-        claude / "skills" / "existing" / "SKILL.md"
-    ).read_text().count("disable-model-invocation") == 1
+    # The server's flag wins over whatever value the body arrived with, in both
+    # directions - counting the key would pass on a stale value either way.
+    assert (claude / "skills" / "existing" / "SKILL.md").read_text() == (
+        "---\nname: Existing\ndisable-model-invocation: true\n---\nBody\n"
+    )
+    assert (claude / "skills" / "stale" / "SKILL.md").read_text() == (
+        "---\nname: Stale\n---\nBody\n"
+    )
 
 
 def test_claude_missing_frontmatter_is_written_with_warning(pull_env, capsys):

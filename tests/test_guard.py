@@ -201,3 +201,83 @@ def test_module_entry_emits_denial_json_and_fails_open_on_garbage(tmp_path: Path
     )
     assert garbage.returncode == 0
     assert garbage.stdout == ""
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "echo hi > {path}",
+        "printf x >> {path}",
+        "rm {path}",
+        "cp /tmp/x {path}",
+        "tee {path}",
+        "mv /tmp/x {path}",
+        "sed -i s/a/b/ {path}",
+        "cat /tmp/x | tee {path}",
+        "true && rm {path}",
+    ],
+)
+def test_bash_denies_shell_writes_to_the_mirror(tmp_path: Path, template: str) -> None:
+    """Write/Edit are not the only way to reach a mirror file - an agent told to
+    prefer shell edits reaches it through redirects and ordinary tools."""
+    target = memory_dir(tmp_path) / "foo.md"
+    reason = run_guard(
+        payload("Bash", {"command": template.format(path=target)}), {}, home=tmp_path
+    )
+    assert reason is not None, template
+    assert "human-gated flow" in reason
+
+
+def test_bash_denies_tilde_paths(tmp_path: Path) -> None:
+    """shlex does not expand ~, and the tilde form is how the path is usually typed."""
+    memory_dir(tmp_path)
+    reason = run_guard(
+        payload("Bash", {"command": "echo x > ~/.claude/projects/proj/memory/foo.md"}),
+        {},
+        home=tmp_path,
+    )
+    assert reason is not None
+
+
+def test_bash_denies_relative_paths_against_payload_cwd(tmp_path: Path) -> None:
+    target = memory_dir(tmp_path)
+    reason = run_guard(
+        payload("Bash", {"command": "rm ./foo.md"}, cwd=target), {}, home=tmp_path
+    )
+    assert reason is not None
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "cat {path}",
+        "grep -n flow {path}",
+        "head -20 {path}",
+        "ls {dir}",
+        "wc -l {path}",
+        "sed -n 1,5p {path}",
+        "diff {path} /tmp/other.md",
+    ],
+)
+def test_bash_still_allows_reads_of_the_mirror(tmp_path: Path, template: str) -> None:
+    """The guard blocks writes, not inspection - reading a memory is normal work."""
+    directory = memory_dir(tmp_path)
+    command = template.format(path=directory / "foo.md", dir=directory)
+    assert run_guard(payload("Bash", {"command": command}), {}, home=tmp_path) is None
+
+
+def test_bash_allows_writes_outside_the_mirror(tmp_path: Path) -> None:
+    outside = tmp_path / "notes.md"
+    assert (
+        run_guard(payload("Bash", {"command": f"echo x > {outside}"}), {}, home=tmp_path)
+        is None
+    )
+
+
+def test_bash_denies_a_read_command_redirected_into_the_mirror(tmp_path: Path) -> None:
+    """A reader is only a reader until its output is pointed at a mirror file."""
+    target = memory_dir(tmp_path) / "foo.md"
+    reason = run_guard(
+        payload("Bash", {"command": f"cat /tmp/x > {target}"}), {}, home=tmp_path
+    )
+    assert reason is not None
