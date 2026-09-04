@@ -51,6 +51,12 @@ def sync_cwd_exprs() -> list[tuple[str, str]]:
     return found
 
 
+def test_session_start_pulls_rendered_instructions():
+    settings = SETTINGS.read_text()
+    assert "/api/config/skills/instructions/claude-code" in settings
+    assert "/api/config/claude-md" not in settings
+
+
 def expand(expr: str, *, cwd: Path, env: dict[str, str]) -> str:
     """Expand a shell expression the way the hook runtime would."""
     assert _SH is not None  # guaranteed by pytestmark

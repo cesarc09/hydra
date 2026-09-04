@@ -53,6 +53,8 @@ server/
                         POST /sessions/{id}/archive|unarchive + /sessions/archive-ended
     config.py         - GET/PUT /api/config/claude-md (empty-body guard); CRUD
                         /api/config/commands (name-validated slash-command blobs)
+    skills.py         - Publish/delete and per-harness render endpoints for instructions
+                        and behavioural skills
     memory.py         - CRUD /api/memory; write-flow tripwire; upsert on name
                         (globally unique; 409 on cross-scope name without rescope)
     projects.py       - CRUD /api/projects + auto-register + confirm endpoints
@@ -63,6 +65,8 @@ server/
                         Unknown model -> cost None + unpriced_messages, never 0
   services/
     session_manager.py - State machine, bounded SSE broadcast, DB writes, archive ops
+    skills.py          - Marker discovery, one-pass slot rendering, variant validation,
+                         shared skills-store write lock
     slug.py            - Slug normalization + stoplist for auto-registered projects
 client/
   hydra_cli/
@@ -124,6 +128,7 @@ tests/
   conftest.py         - Per-test isolated SQLite + test client; sets ALLOW_NO_AUTH=True
   test_hooks.py       - Hook ingestion + state machine
   test_config.py      - CLAUDE.md endpoint
+  test_config_skills.py - Skills publish/delete, validation, auth, and render endpoints
   test_memory.py      - Memory CRUD + unique-name upsert/409/rescope + unpin + scoping
   test_migrations.py  - Legacy partial-index DB → UNIQUE(name) (twin collapse, rename,
                         idempotency)
@@ -134,6 +139,7 @@ tests/
   test_commands_pull.py - `commands pull` write + state-file-scoped prune
   test_config_hooks.py - /api/config/hooks endpoints (CRUD, name + metadata validation,
                         name ordering, auth). Named to avoid test_hooks.py (ingestion)
+  test_skills_render.py - Skills marker grammar, one-pass render, and validation
   test_slug_stoplist.py - path shape / containment / rejection corpus, as module-level
                         case lists so the client copy can run the identical cases
   test_client_paths.py - the same corpus against client/hydra_cli/paths.py (drift guard)
@@ -158,6 +164,7 @@ tests/
                         symlinked workflow dirs, offsets (failure, partial line, truncation)
 schema.sql            - DDL; sessions.archived_at, memories project_slug FK + UNIQUE(name)
                         (inline; db._migrate installs it on legacy DBs - see Key Patterns),
+                        skills + skill_variants,
                         config_commands (server-distributed slash commands),
                         config_hooks (server-distributed policy hooks: script + wiring),
                         usage_messages (per-API-message token counts, PK message_id)
@@ -174,7 +181,7 @@ schema.sql            - DDL; sessions.archived_at, memories project_slug FK + UN
 - **Memory authorship:** `author_harness`, `author_session_id` and `author_model` describe the last writer. POST and PUT replace all three; absent means null. The migration backfills only newly-added `author_harness` columns with `claude-code`. The CLI gets harness and session from its environment and model from `--model` or the newest matching transcript record.
 - **Flow marker:** POST/PUT/DELETE `/api/memory` require `X-Hydra-Flow` or return 428. It is a tripwire, not authorisation; the CLI exposes `--flow`, the UI sends constant `dashboard`, and CORS allows the header.
 - **Type<->scope invariant, enforced in BOTH directions** (`_type_for_scope` in `routers/memory.py`, on upsert *and* update). Pinned + a global type -> coerced to `project` (this is what auto-scopes the dashboard's Move-to-project). Global + a project-scoped type -> **422**, because there is no way to guess user vs feedback; the caller has to say. So `hydra memory update <id> --global` requires `--type user|feedback`, and the dashboard's Move-to-Global asks for one.
-- **CLAUDE.md scope:** single-row, global-only (no project_slug column). Editable via the `/memory` dashboard or `python -m hydra_cli config put-claude-md <file>`. SessionStart hook curls the blob to `~/.claude/CLAUDE.md` (user-level), so a save propagates to every machine on next start. PUT rejects empty/whitespace-only bodies to prevent accidental wipe.
+- **Skills store:** `skills` holds instructions and behavioural-skill metadata; `skill_variants` holds one common markdown body plus optional harness slot maps. Markers are exactly `{{name}}` for lowercase identifier names, rendered in one pass. Validation covers only variants present, and a missing harness variant leaves common byte-identical. Full publishes run under one shared lock. `/api/config/claude-md` round-trips raw `instructions/common`, while SessionStart curls the rendered `claude-code` instructions. Migration copies a legacy blob only when no instructions row exists, then always drops `claude_md`.
 - **Slash-command distribution:** the server is the single distribution source for slash commands. `config_commands` is a `name -> content` blob table; `GET /api/config/commands` returns the whole `{name: content}` map in one round trip (no manifest - YAGNI), plus per-name GET/PUT/DELETE. Names are validated server-side to `^[A-Za-z0-9][A-Za-z0-9_-]*$` (no path separators / leading dot). The SessionStart `commands pull` hook writes each into `~/.claude/commands/<name>.md` **verbatim** - deliberately NOT via `sync.py`'s `_base_slug`, which would rename `code-review` → `code_review` and break the command - and prunes via a managed-names state file (`~/.claude/.hydra-commands.json`) so it only ever deletes files it wrote, never hand-authored ones. Public commands are authored in `client/commands/` and seeded with `scripts/publish_commands.sh` (run on deploy); private/per-deployment commands are seeded from their own source, so Hydra's repo carries no deployment-specific command content.
 - **Policy-hook distribution (read the exit-2 note before touching `hooks.py`).** `config_hooks` carries a hook's **script body and its settings.json wiring in one row**, and they must never travel separately. `python <missing>.py` exits **2**, and exit 2 on `PreToolUse` is the *blocking* code - so wiring that reaches a machine ahead of its script converts a fail-open guard into a hard deny of every matching tool call. `run_pull` therefore emits wiring **only for a name whose file is on disk after the write phase**; that check is the whole safety story, not the compile check. Corollaries:
   - **Wiring says `python`, never `python3`, and never an absolute path.** Hook commands run in shell form - `sh -c` on macOS/Linux, **Git Bash on Windows**, PowerShell only if Git Bash is absent - and Windows has no `python3` on PATH (the python.org installer ships `python.exe` and `py.exe`; the `python3.exe` that resolves there is the Microsoft Store alias stub). `python3` wiring therefore installed all four policy hooks on Windows and ran none of them, silently, for weeks. Bare `python` is the same interpreter contract `setup.sh` and `client/settings.json` already depend on, and a bare name keeps the layer stable where an absolute `sys.executable` would rewrite `settings.hooks.json` on every venv switch. `run_pull` warns to stderr when a wired runtime's interpreter is not on PATH, because that failure is otherwise invisible: it exits 127, not the blocking 2. `$HOME` in the script path is fine - sh, Git Bash and PowerShell all expand it.

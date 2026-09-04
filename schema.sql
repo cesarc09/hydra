@@ -28,11 +28,24 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
 CREATE INDEX IF NOT EXISTS idx_events_received ON events(received_at);
 
--- Personal CLAUDE.md content (single-row table)
-CREATE TABLE IF NOT EXISTS claude_md (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    content TEXT NOT NULL DEFAULT '',
-    updated_at TEXT NOT NULL
+-- Server-distributed instructions and behavioural skills. Each document has
+-- one common markdown body plus optional per-harness slot values; instructions
+-- is the single reserved document rendered to CLAUDE.md / AGENTS.md.
+CREATE TABLE IF NOT EXISTS skills (
+    name                TEXT PRIMARY KEY,
+    kind                TEXT NOT NULL CHECK (kind IN ('instructions', 'skill')),
+    enabled             INTEGER NOT NULL DEFAULT 1,
+    implicit_invocation INTEGER NOT NULL DEFAULT 0,
+    instances           TEXT,  -- NULL = every machine; else a JSON array of instance ids
+    updated_at          TEXT NOT NULL,
+    CHECK ((kind = 'instructions') = (name = 'instructions'))
+);
+
+CREATE TABLE IF NOT EXISTS skill_variants (
+    name    TEXT NOT NULL REFERENCES skills(name) ON DELETE CASCADE,
+    variant TEXT NOT NULL,  -- 'common' or a harness id
+    body    TEXT NOT NULL,  -- markdown for common; a JSON slot map otherwise
+    PRIMARY KEY (name, variant)
 );
 
 -- Server-distributed slash commands. One row per command; name is the

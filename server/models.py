@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 MemoryType = Literal["user", "feedback", "project", "reference"]
 HookRuntime = Literal["python", "bash"]
+SkillKind = Literal["instructions", "skill"]
 
 
 class HookEvent(BaseModel):
@@ -106,6 +107,18 @@ class MemoryItem(BaseModel):
     author_model: str | None = None
     created_at: str
     updated_at: str
+
+
+# --- Distributed skills ---
+
+
+class SkillUpsert(BaseModel):
+    kind: SkillKind
+    enabled: bool = True
+    implicit_invocation: bool = False
+    instances: list[str] | None = None
+    common: str
+    variants: dict[str, dict[str, str]] = Field(default_factory=dict)
 
 
 # --- Distributed hooks ---
