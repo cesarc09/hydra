@@ -10,7 +10,7 @@ Two things about Claude Code hurt once you use it on more than one machine.
 
 **Every session runs in isolation.** You can't tell at a glance which session on which machine is waiting for input, what just got edited, or whether something is stuck.
 
-Hydra is one server that solves both. A memory store and CLAUDE.md that travel with you across machines - pulled when a session starts, pushed when it ends - a live dashboard that watches every session in real time, and token accounting across machines. Same server, same bearer token; the loops are independent, so observation keeps working if sync fails, and vice versa.
+Hydra is one server that solves both. A server-owned memory store and CLAUDE.md that are pulled to every machine when a session starts, a live dashboard that watches every session in real time, and token accounting across machines. Same server, same bearer token; the loops are independent, so observation keeps working if sync fails, and vice versa.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -33,7 +33,7 @@ Hydra is one server that solves both. A memory store and CLAUDE.md that travel w
 
 Two loops run continuously:
 
-**Context loop** - `python -m hydra_cli sync` reconciles each machine's local memory dir (`~/.claude/projects/<dir>/memory/`) with the server. A SessionStart hook runs `python -m hydra_cli sync --pull` before Claude sees the session; a Stop hook runs `python -m hydra_cli sync --push` at turn end. Memories are typed: `user`/`feedback` are global (available everywhere), `project`/`reference` are pinned to the project the cwd maps to. Unregistered cwds auto-register via the server (with a stoplist for `~`, `~/Downloads`, `/tmp`, etc.) and surface in the dashboard's **Pending review** section for confirmation or deletion. The same SessionStart pass pulls server-distributed slash commands into `~/.claude/commands/` and policy hooks into `~/.claude/hooks/`, so a command or hook published once reaches every machine.
+**Context loop** - `python -m hydra_cli sync` pulls each project's server memories into its local mirror (`~/.claude/projects/<dir>/memory/`). A SessionStart hook runs `python -m hydra_cli sync --pull` before Claude sees the session. The server is the only edit source; use the dashboard or `hydra memory ...`, never local mirror edits. Memories are typed: `user`/`feedback` are global (available everywhere), `project`/`reference` are pinned to the project the cwd maps to. Unregistered cwds auto-register via the server (with a stoplist for `~`, `~/Downloads`, `/tmp`, etc.) and surface in the dashboard's **Pending review** section for confirmation or deletion. The same SessionStart pass pulls server-distributed slash commands into `~/.claude/commands/` and policy hooks into `~/.claude/hooks/`, so a command or hook published once reaches every machine.
 
 **Observation loop** - every Claude Code tool call fires an HTTP hook to `/api/hooks/event`. The server tracks session state transitions (active / idle / waiting_input / ended) and broadcasts them over Server-Sent Events to any open dashboard.
 
@@ -99,10 +99,9 @@ Regardless of network path, keep `HYDRA_BIND_HOST=127.0.0.1` and terminate TLS *
 Invoke as `python -m hydra_cli ...`. A `hydra` console shim is also installed by setup.sh; use it interchangeably when it's on `PATH`. The `python -m` form is the canonical one because it doesn't depend on a venv-bound entry point - the same reason hooks use it.
 
 ```
-python -m hydra_cli sync [--pull|--push|--dry-run] [--cwd PATH]
-                      # Reconcile local memory dir with server. Bidirectional
-                      # by default; flags restrict direction. Conflicts are
-                      # flagged, not merged.
+python -m hydra_cli sync [--pull] [--dry-run] [--cwd PATH]
+                      # Pull server memories into the local mirror. --pull is
+                      # accepted for compatibility and has no effect.
 python -m hydra_cli memory list [--all|--project SLUG|--global] [--json]
                       # Defaults to this project + globals, one index line each.
                       # --json returns full rows with bodies.

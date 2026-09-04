@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from hydra_cli import __main__ as cli
 from hydra_cli import sync as sync_mod
 
 from server.services.slug import derive_slug_from_cwd
@@ -286,7 +287,6 @@ def test_roundtrip_preserves_content(tmp_path: Path):
     parsed = sync_mod.parse_memory_file(p)
     assert parsed is not None
     # Compare via the same normalization the sync uses
-    assert sync_mod.fields_differ(original, parsed) == []
 
 
 def test_memory_dir_for_cwd_posix(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -405,6 +405,29 @@ def test_scope_rule():
     assert sync_mod.effective_project_slug("project", "myproj") == "myproj"
 
 
+def test_sync_parser_is_pull_only(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    args = cli.build_parser().parse_args(["sync"])
+    assert args.pull is False
+    assert not hasattr(args, "push")
+
+    called = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    monkeypatch.setattr(
+        sync_mod,
+        "run_sync",
+        lambda cwd, *, dry_run=False: called.append((cwd, dry_run)) or 0,
+    )
+    with pytest.raises(SystemExit) as exc:
+        sync_mod.cmd_sync(args)
+    assert exc.value.code == 0
+    assert called == [(str(tmp_path), False)]
+
+    with pytest.raises(SystemExit) as exc:
+        cli.build_parser().parse_args(["sync", "--push"])
+    assert exc.value.code == 2
+
+
 # --- Pull-only -----------------------------------------------------------
 
 
@@ -418,7 +441,7 @@ def test_pull_writes_files_and_index(
         {"id": 2, "name": "p1", "description": "proj", "type": "project", "body": "pb",
          "project_slug": "proj", "created_at": "t", "updated_at": "t"},
     ]
-    code = sync_mod.run_sync("/test/proj", do_pull=True, do_push=False)
+    code = sync_mod.run_sync("/test/proj")
     assert code == 0
     files = sorted(p.name for p in memory_dir.iterdir() if p.suffix == ".md")
     assert "g1.md" in files and "p1.md" in files and "MEMORY.md" in files
@@ -428,129 +451,39 @@ def test_pull_writes_files_and_index(
     assert "[p1](p1.md)" in index
 
 
-# --- Push-only -----------------------------------------------------------
-
-
-def test_push_uploads_local(fake_api: FakeAPI, memory_dir: Path):
-    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
-    memory_dir.mkdir(parents=True)
-    (memory_dir / "g1.md").write_text(
-        "---\nname: g1\ndescription: glob\ntype: user\n---\nbody g\n",
-        encoding="utf-8",
-    )
-    (memory_dir / "p1.md").write_text(
-        "---\nname: p1\ndescription: proj\ntype: project\n---\nbody p\n",
-        encoding="utf-8",
-    )
-
-    code = sync_mod.run_sync("/test/proj", do_pull=False, do_push=True)
-    assert code == 0
-    names = {(m["name"], m.get("project_slug")) for m in fake_api.memories}
-    assert ("g1", None) in names
-    assert ("p1", "proj") in names
-
-
-def test_push_skips_project_memory_when_cwd_stoplisted(
-    fake_api: FakeAPI, memory_dir: Path, capsys: pytest.CaptureFixture[str]
-):
-    """A stoplist basename (Downloads, tmp, ...) returns no slug from
-    auto-register, so project-scoped memories from that cwd are skipped."""
-    memory_dir.mkdir(parents=True)
-    (memory_dir / "p1.md").write_text(
-        "---\nname: p1\ndescription: d\ntype: project\n---\nbody\n",
-        encoding="utf-8",
-    )
-    code = sync_mod.run_sync("/home/me/Downloads", do_pull=False, do_push=True)
-    assert code == 0
-    assert fake_api.memories == []
-    err = capsys.readouterr().err
-    assert "no project registered" in err
-
-
-def test_push_warns_when_memory_dir_missing(
-    fake_api: FakeAPI, memory_dir: Path, capsys: pytest.CaptureFixture[str]
-):
-    """If the computed memory dir doesn't exist, a --push must warn instead of
-    silently reporting 0 pushed (the wrong-slug failure mode)."""
-    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
-    # NB: deliberately do NOT mkdir memory_dir - simulate a missing dir.
-    code = sync_mod.run_sync("/test/proj", do_pull=False, do_push=True)
-    assert code == 0
-    err = capsys.readouterr().err
-    assert "no memory dir" in err
-
-
-# --- Bidirectional --------------------------------------------------------
-
-
-def test_bidirectional_identical_is_noop(fake_api: FakeAPI, memory_dir: Path):
-    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
-    fake_api.memories = [{
-        "id": 1, "name": "shared", "description": "d", "type": "user",
-        "body": "content", "project_slug": None,
-        "created_at": "t", "updated_at": "t",
-    }]
-    memory_dir.mkdir(parents=True)
-    (memory_dir / "shared.md").write_text(
-        sync_mod.serialize_memory({
-            "name": "shared", "description": "d", "type": "user", "body": "content",
-        }),
-        encoding="utf-8",
-    )
-
-    code = sync_mod.run_sync("/test/proj")
-    assert code == 0
-    assert len(fake_api.memories) == 1
-
-
-def test_bidirectional_detects_conflict(
-    fake_api: FakeAPI, memory_dir: Path, capsys: pytest.CaptureFixture[str]
-):
-    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
-    fake_api.memories = [{
-        "id": 1, "name": "shared", "description": "d", "type": "user",
-        "body": "server-version", "project_slug": None,
-        "created_at": "t", "updated_at": "t",
-    }]
-    memory_dir.mkdir(parents=True)
-    (memory_dir / "shared.md").write_text(
-        "---\nname: shared\ndescription: d\ntype: user\n---\nlocal-version\n",
-        encoding="utf-8",
-    )
-
-    code = sync_mod.run_sync("/test/proj")
-    assert code == 2
-    err = capsys.readouterr().err
-    assert "conflict: shared" in err
-    # Neither side was modified
-    server_body = fake_api.memories[0]["body"]
-    assert server_body == "server-version"
-    local = (memory_dir / "shared.md").read_text()
-    assert "local-version" in local
-
-
-def test_bidirectional_pushes_local_only_and_pulls_server_only(
+def test_authoritative_index_excludes_idless_stray(
     fake_api: FakeAPI, memory_dir: Path
 ):
     fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
-    fake_api.memories = [{
-        "id": 1, "name": "onlyserver", "description": "", "type": "user",
-        "body": "from server", "project_slug": None,
-        "created_at": "t", "updated_at": "t",
-    }]
+    fake_api.memories = [_server_memory(id=1, name="keep")]
     memory_dir.mkdir(parents=True)
-    (memory_dir / "onlylocal.md").write_text(
-        "---\nname: onlylocal\ndescription: \ntype: user\n---\nfrom local\n",
+    stray = memory_dir / "stray.md"
+    stray.write_text(
+        "---\nname: stray\ndescription: d\ntype: user\n---\nlocal only\n",
         encoding="utf-8",
     )
 
-    code = sync_mod.run_sync("/test/proj")
-    assert code == 0
-    names = {m["name"] for m in fake_api.memories}
-    assert names == {"onlyserver", "onlylocal"}
-    local_files = {p.name for p in memory_dir.iterdir() if p.suffix == ".md"}
-    assert "onlyserver.md" in local_files
-    assert "onlylocal.md" in local_files
+    sync_mod.run_sync("/test/proj")
+
+    assert stray.exists()
+    assert "stray" not in (memory_dir / "MEMORY.md").read_text()
+
+
+def test_empty_server_index_includes_idless_stray(
+    fake_api: FakeAPI, memory_dir: Path
+):
+    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
+    memory_dir.mkdir(parents=True)
+    stray = memory_dir / "stray.md"
+    stray.write_text(
+        "---\nname: stray\ndescription: d\ntype: user\n---\nlocal only\n",
+        encoding="utf-8",
+    )
+
+    sync_mod.run_sync("/test/proj")
+
+    assert stray.exists()
+    assert "[stray](stray.md)" in (memory_dir / "MEMORY.md").read_text()
 
 
 # --- Prune-on-pull --------------------------------------------------------
@@ -572,7 +505,7 @@ def test_pull_prunes_server_deleted_memory(fake_api: FakeAPI, memory_dir: Path):
         encoding="utf-8",
     )
 
-    code = sync_mod.run_sync("/test/proj", do_pull=True, do_push=False)
+    code = sync_mod.run_sync("/test/proj")
     assert code == 0
     names = {p.name for p in memory_dir.iterdir() if p.suffix == ".md"}
     assert "orphan.md" not in names
@@ -583,9 +516,8 @@ def test_pull_prunes_server_deleted_memory(fake_api: FakeAPI, memory_dir: Path):
 def test_pull_keeps_a_memory_the_server_refused(
     fake_api: FakeAPI, memory_dir: Path
 ):
-    """A memory the server 409s (its name is held in another scope) is skipped by
-    push and stays on disk with no id. The prune must NOT then delete it - the
-    mirror is the only copy of content nobody has accepted yet."""
+    """An id-less file absent from the server stays on disk; it may be the only
+    copy of content nobody has accepted yet."""
     fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
     fake_api.memories = [_server_memory(id=1, name="keep")]
     memory_dir.mkdir(parents=True)
@@ -594,7 +526,7 @@ def test_pull_keeps_a_memory_the_server_refused(
         encoding="utf-8",
     )
 
-    sync_mod.run_sync("/test/proj", do_pull=True, do_push=False)
+    sync_mod.run_sync("/test/proj")
 
     assert (memory_dir / "refused.md").exists()
     assert "the only copy" in (memory_dir / "refused.md").read_text()
@@ -608,33 +540,9 @@ def test_pull_never_deletes_an_unparseable_file(fake_api: FakeAPI, memory_dir: P
     memory_dir.mkdir(parents=True)
     (memory_dir / "notes.md").write_text("# just some notes\n", encoding="utf-8")
 
-    sync_mod.run_sync("/test/proj", do_pull=True, do_push=False)
+    sync_mod.run_sync("/test/proj")
 
     assert (memory_dir / "notes.md").exists()
-
-
-def test_push_tombstone_rebuilds_the_index(fake_api: FakeAPI, memory_dir: Path):
-    """A push-only run that tombstones a file must rebuild MEMORY.md, or the
-    index goes on advertising a memory whose file it just deleted."""
-    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
-    fake_api.memories = [_server_memory(id=1, name="keep")]
-    memory_dir.mkdir(parents=True)
-    (memory_dir / "keep.md").write_text(
-        "---\nid: 1\nname: keep\ndescription: d\ntype: user\n---\nb\n", encoding="utf-8",
-    )
-    (memory_dir / "ghost.md").write_text(
-        "---\nid: 99\nname: ghost\ndescription: d\ntype: user\n---\nb\n",
-        encoding="utf-8",
-    )
-    (memory_dir / "MEMORY.md").write_text(
-        "- [keep](keep.md)\n- [ghost](ghost.md)\n", encoding="utf-8",
-    )
-
-    sync_mod.run_sync("/test/proj", do_pull=False, do_push=True)
-
-    index = (memory_dir / "MEMORY.md").read_text()
-    assert "ghost" not in index
-    assert "keep" in index
 
 
 def test_pull_does_not_prune_unsynced_cwd(fake_api: FakeAPI, memory_dir: Path):
@@ -645,7 +553,7 @@ def test_pull_does_not_prune_unsynced_cwd(fake_api: FakeAPI, memory_dir: Path):
         "---\nname: orphan\ndescription: d\ntype: user\n---\nlocal only\n",
         encoding="utf-8",
     )
-    code = sync_mod.run_sync("/home/me/Downloads", do_pull=True, do_push=False)
+    code = sync_mod.run_sync("/home/me/Downloads")
     assert code == 0
     names = {p.name for p in memory_dir.iterdir() if p.suffix == ".md"}
     assert "orphan.md" in names
@@ -666,33 +574,12 @@ def test_pull_dry_run_does_not_prune(fake_api: FakeAPI, memory_dir: Path):
         "---\nname: orphan\ndescription: d\ntype: user\n---\ngone\n",
         encoding="utf-8",
     )
-    code = sync_mod.run_sync(
-        "/test/proj", do_pull=True, do_push=False, dry_run=True
-    )
+    code = sync_mod.run_sync("/test/proj", dry_run=True)
     assert code == 0
     assert (memory_dir / "orphan.md").exists()
 
 
-def test_bidirectional_does_not_prune_local_only(fake_api: FakeAPI, memory_dir: Path):
-    """Bidirectional sync uploads a local-only memory rather than pruning it."""
-    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
-    memory_dir.mkdir(parents=True)
-    (memory_dir / "onlylocal.md").write_text(
-        "---\nname: onlylocal\ndescription: d\ntype: user\n---\nkeep me\n",
-        encoding="utf-8",
-    )
-    code = sync_mod.run_sync("/test/proj")  # bidirectional
-    assert code == 0
-    assert (memory_dir / "onlylocal.md").exists()
-    assert ("onlylocal", None) in {
-        (m["name"], m.get("project_slug")) for m in fake_api.memories
-    }
-
-
-# --- Identity: the duplicate-memory bug -----------------------------------
-#
-# Every test below is a regression guard for one way the mirror used to mint a
-# duplicate row. See the module docstring.
+# --- Provenance and canonical filenames ----------------------------------
 
 
 def _server_memory(**overrides: Any) -> dict[str, Any]:
@@ -707,213 +594,11 @@ def test_pull_stamps_id_into_frontmatter(fake_api: FakeAPI, memory_dir: Path):
     fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
     fake_api.memories = [_server_memory(id=512, name="m")]
 
-    sync_mod.run_sync("/test/proj", do_pull=True, do_push=False)
+    sync_mod.run_sync("/test/proj")
 
     parsed = sync_mod.parse_memory_file(memory_dir / "m.md")
     assert parsed is not None
     assert parsed["id"] == 512
-
-
-def test_push_does_not_resurrect_a_deleted_memory(
-    fake_api: FakeAPI, memory_dir: Path
-):
-    """THE bug. A memory deleted on the server leaves its mirror file behind;
-    the Stop-hook push used to re-INSERT it as a brand-new row. Now the file's
-    id 404s and the file is tombstoned instead."""
-    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
-    fake_api.memories = [_server_memory(id=1, name="survivor")]
-    memory_dir.mkdir(parents=True)
-    (memory_dir / "survivor.md").write_text(
-        "---\nid: 1\nname: survivor\ndescription: d\ntype: user\n---\nb\n",
-        encoding="utf-8",
-    )
-    # id 99 was deleted on the server, but its mirror file is still here.
-    (memory_dir / "ghost.md").write_text(
-        "---\nid: 99\nname: ghost\ndescription: d\ntype: user\n---\nb\n",
-        encoding="utf-8",
-    )
-
-    code = sync_mod.run_sync("/test/proj", do_pull=False, do_push=True)
-
-    assert code == 0
-    assert [m["name"] for m in fake_api.memories] == ["survivor"]  # NOT resurrected
-    assert not (memory_dir / "ghost.md").exists()  # tombstoned
-
-
-def test_push_does_not_fight_a_memory_rescoped_elsewhere(
-    fake_api: FakeAPI, memory_dir: Path
-):
-    """A memory re-scoped to ANOTHER project is absent from this project's view
-    but very much alive. Pushing it back would re-hijack it to this project on
-    every Stop hook, so the file is dropped and the row left alone."""
-    fake_api.projects = [
-        {"slug": "proj", "path": "/test/proj"},
-        {"slug": "other", "path": "/test/other"},
-    ]
-    fake_api.memories = [_server_memory(id=7, name="moved", project_slug="other",
-                                        type="project")]
-    memory_dir.mkdir(parents=True)
-    (memory_dir / "moved.md").write_text(
-        "---\nid: 7\nname: moved\ndescription: d\ntype: user\n---\nb\n",
-        encoding="utf-8",
-    )
-
-    sync_mod.run_sync("/test/proj", do_pull=False, do_push=True)
-
-    assert len(fake_api.memories) == 1
-    assert fake_api.memories[0]["project_slug"] == "other"  # untouched
-    assert fake_api.memories[0]["type"] == "project"
-    assert not (memory_dir / "moved.md").exists()
-
-
-def test_push_renames_in_place_instead_of_creating_a_row(
-    fake_api: FakeAPI, memory_dir: Path
-):
-    """Renaming a memory locally updates the row by id. Before, the new name was
-    a new key, so it INSERTed and the old row lived on as a duplicate."""
-    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
-    fake_api.memories = [_server_memory(id=3, name="old-name", updated_at="T1")]
-    memory_dir.mkdir(parents=True)
-    (memory_dir / "old_name.md").write_text(
-        "---\nid: 3\nname: new-name\ndescription: d\ntype: user\nupdated_at: T1\n"
-        "---\nb\n",
-        encoding="utf-8",
-    )
-
-    sync_mod.run_sync("/test/proj", do_pull=False, do_push=True)
-
-    assert len(fake_api.memories) == 1
-    assert fake_api.memories[0]["id"] == 3
-    assert fake_api.memories[0]["name"] == "new-name"
-
-
-def test_push_rescopes_in_place(fake_api: FakeAPI, memory_dir: Path):
-    """Changing a memory's type from global to project re-scopes the same row."""
-    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
-    fake_api.memories = [_server_memory(id=4, name="m", type="feedback", updated_at="T1")]
-    memory_dir.mkdir(parents=True)
-    (memory_dir / "m.md").write_text(
-        "---\nid: 4\nname: m\ndescription: d\ntype: project\nupdated_at: T1\n---\nb\n",
-        encoding="utf-8",
-    )
-
-    sync_mod.run_sync("/test/proj", do_pull=False, do_push=True)
-
-    assert len(fake_api.memories) == 1
-    assert fake_api.memories[0]["id"] == 4
-    assert fake_api.memories[0]["project_slug"] == "proj"
-
-
-def test_push_of_a_versionless_mirror_cannot_move_a_row(
-    fake_api: FakeAPI, memory_dir: Path
-):
-    """A pre-upgrade mirror file (no id, no updated_at) pairs by name, but it has
-    no basis to move the row's IDENTITY - its type/scope may be arbitrarily
-    stale. Only its content lands. Otherwise the first Stop hook after the
-    migration would push every legacy file's old scope back over the rows the
-    migration just re-scoped, undoing it."""
-    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
-    # The server row was re-scoped to a project by the migration.
-    fake_api.memories = [_server_memory(
-        id=5, name="m", type="project", project_slug="proj", body="OLD",
-        updated_at="T2",
-    )]
-    memory_dir.mkdir(parents=True)
-    # The legacy mirror still says global/feedback, and carries no version.
-    (memory_dir / "m.md").write_text(
-        "---\nname: m\ndescription: d\ntype: feedback\n---\nEDITED\n",
-        encoding="utf-8",
-    )
-
-    sync_mod.run_sync("/test/proj", do_pull=False, do_push=True)
-
-    row = fake_api.memories[0]
-    assert len(fake_api.memories) == 1
-    assert row["body"] == "EDITED"          # content still lands
-    assert row["project_slug"] == "proj"    # but the scope is NOT reverted
-    assert row["type"] == "project"
-    assert row["name"] == "m"
-
-
-def test_push_stamps_id_on_a_new_local_memory(fake_api: FakeAPI, memory_dir: Path):
-    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
-    memory_dir.mkdir(parents=True)
-    (memory_dir / "fresh.md").write_text(
-        "---\nname: fresh\ndescription: d\ntype: user\n---\nb\n", encoding="utf-8",
-    )
-
-    sync_mod.run_sync("/test/proj", do_pull=False, do_push=True)
-
-    assert len(fake_api.memories) == 1
-    new_id = fake_api.memories[0]["id"]
-    assert _parsed(memory_dir / "fresh.md")["id"] == new_id
-
-
-def test_push_skips_when_name_is_held_in_another_scope(
-    fake_api: FakeAPI, memory_dir: Path, capsys: pytest.CaptureFixture[str]
-):
-    """An id-less file whose name is already pinned elsewhere gets a 409. It must
-    warn and skip, never raise - a hook discards stderr, and an exception would
-    strand every file after it."""
-    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
-    fake_api.memories = [
-        _server_memory(id=1, name="taken", project_slug="other", type="project"),
-    ]
-    memory_dir.mkdir(parents=True)
-    (memory_dir / "taken.md").write_text(
-        "---\nname: taken\ndescription: d\ntype: user\n---\nb\n", encoding="utf-8",
-    )
-    (memory_dir / "fine.md").write_text(
-        "---\nname: fine\ndescription: d\ntype: user\n---\nb\n", encoding="utf-8",
-    )
-
-    code = sync_mod.run_sync("/test/proj", do_pull=False, do_push=True)
-
-    assert code == 2  # reported as a conflict
-    # The later file still got pushed - one 409 must not abort the pass.
-    assert "fine" in {m["name"] for m in fake_api.memories}
-    assert len(fake_api.memories) == 2
-
-
-def test_push_skips_files_claiming_the_same_id(
-    fake_api: FakeAPI, memory_dir: Path, capsys: pytest.CaptureFixture[str]
-):
-    """A memory file copied by hand carries its id. Two files, one id: skip both
-    rather than let last-write-wins silently destroy one."""
-    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
-    fake_api.memories = [_server_memory(id=5, name="orig", body="SERVER")]
-    memory_dir.mkdir(parents=True)
-    (memory_dir / "a.md").write_text(
-        "---\nid: 5\nname: orig\ndescription: d\ntype: user\n---\nAAA\n",
-        encoding="utf-8",
-    )
-    (memory_dir / "b.md").write_text(
-        "---\nid: 5\nname: copy\ndescription: d\ntype: user\n---\nBBB\n",
-        encoding="utf-8",
-    )
-
-    sync_mod.run_sync("/test/proj", do_pull=False, do_push=True)
-
-    assert fake_api.memories[0]["body"] == "SERVER"  # neither won
-    assert "same id/name" in capsys.readouterr().err
-
-
-def test_push_does_not_tombstone_against_an_empty_server(
-    fake_api: FakeAPI, memory_dir: Path
-):
-    """A wrong HYDRA_URL or a restored DB looks exactly like 'all deleted'. The
-    mirror may be the only copy left, so nothing is removed."""
-    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
-    fake_api.memories = []
-    memory_dir.mkdir(parents=True)
-    (memory_dir / "m.md").write_text(
-        "---\nid: 1\nname: m\ndescription: d\ntype: user\n---\nb\n", encoding="utf-8",
-    )
-
-    sync_mod.run_sync("/test/proj", do_pull=False, do_push=True)
-
-    assert (memory_dir / "m.md").exists()
-    assert fake_api.memories == []  # and not re-inserted either
 
 
 def test_pull_does_not_prune_against_an_empty_server(
@@ -926,7 +611,7 @@ def test_pull_does_not_prune_against_an_empty_server(
         "---\nid: 1\nname: m\ndescription: d\ntype: user\n---\nb\n", encoding="utf-8",
     )
 
-    sync_mod.run_sync("/test/proj", do_pull=True, do_push=False)
+    sync_mod.run_sync("/test/proj")
 
     assert (memory_dir / "m.md").exists()
 
@@ -943,7 +628,7 @@ def test_pull_writes_colliding_slugs_to_separate_files(
         _server_memory(id=9, name="keep-hydra-deployment-agnostic", body="TWO"),
     ]
 
-    sync_mod.run_sync("/test/proj", do_pull=True, do_push=False)
+    sync_mod.run_sync("/test/proj")
 
     files = sorted(p.name for p in memory_dir.glob("*.md") if p.name != "MEMORY.md")
     assert files == [
@@ -969,79 +654,9 @@ def test_pull_prunes_an_orphan_left_by_a_rename(fake_api: FakeAPI, memory_dir: P
         encoding="utf-8",
     )
 
-    sync_mod.run_sync("/test/proj", do_pull=True, do_push=False)
+    sync_mod.run_sync("/test/proj")
 
     files = sorted(p.name for p in memory_dir.glob("*.md") if p.name != "MEMORY.md")
     assert files == ["vscode_remote_env_vars.md"]
     index = (memory_dir / "MEMORY.md").read_text()
     assert index.count("VSCode Remote env vars") == 1  # was 2 identical lines
-
-
-def test_push_does_not_revert_a_server_side_rescope(
-    fake_api: FakeAPI, memory_dir: Path, capsys: pytest.CaptureFixture[str]
-):
-    """The /forget workflow: the mirror was pulled at SessionStart, then the
-    memory was re-scoped on the server mid-session. The Stop-hook push must not
-    write the stale file back over that change - it holds an older updated_at,
-    so the server wins and the next pull refreshes the file."""
-    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
-    fake_api.memories = [_server_memory(
-        id=8, name="m", type="project", project_slug="proj", updated_at="T2",
-    )]
-    memory_dir.mkdir(parents=True)
-    # Pulled at T1, when the memory was still a global 'feedback' memory.
-    (memory_dir / "m.md").write_text(
-        "---\nid: 8\nname: m\ndescription: d\ntype: feedback\nupdated_at: T1\n---\nb\n",
-        encoding="utf-8",
-    )
-
-    sync_mod.run_sync("/test/proj", do_pull=False, do_push=True)
-
-    assert fake_api.memories[0]["project_slug"] == "proj"  # re-scope survived
-    assert fake_api.memories[0]["type"] == "project"
-    assert "changed on the server" in capsys.readouterr().err
-
-
-def test_push_restamps_updated_at_so_the_next_push_still_works(
-    fake_api: FakeAPI, memory_dir: Path
-):
-    """After a successful push the file must record the version it just wrote,
-    or the precondition above would treat every later local edit as a conflict."""
-    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
-    fake_api.memories = [_server_memory(id=1, name="m", body="OLD", updated_at="T1")]
-    memory_dir.mkdir(parents=True)
-    (memory_dir / "m.md").write_text(
-        "---\nid: 1\nname: m\ndescription: d\ntype: user\nupdated_at: T1\n---\nEDIT1\n",
-        encoding="utf-8",
-    )
-
-    sync_mod.run_sync("/test/proj", do_pull=False, do_push=True)
-    assert fake_api.memories[0]["body"] == "EDIT1"
-    assert _parsed(memory_dir / "m.md")["updated_at"] == "now"  # restamped
-
-    # A second local edit still pushes.
-    (memory_dir / "m.md").write_text(
-        "---\nid: 1\nname: m\ndescription: d\ntype: user\nupdated_at: now\n---\nEDIT2\n",
-        encoding="utf-8",
-    )
-    sync_mod.run_sync("/test/proj", do_pull=False, do_push=True)
-    assert fake_api.memories[0]["body"] == "EDIT2"
-
-
-def test_push_dry_run_writes_nothing(fake_api: FakeAPI, memory_dir: Path):
-    fake_api.projects = [{"slug": "proj", "path": "/test/proj"}]
-    fake_api.memories = [_server_memory(id=1, name="keep")]
-    memory_dir.mkdir(parents=True)
-    (memory_dir / "ghost.md").write_text(
-        "---\nid: 99\nname: ghost\ndescription: d\ntype: user\n---\nb\n",
-        encoding="utf-8",
-    )
-    (memory_dir / "fresh.md").write_text(
-        "---\nname: fresh\ndescription: d\ntype: user\n---\nb\n", encoding="utf-8",
-    )
-
-    sync_mod.run_sync("/test/proj", do_pull=False, do_push=True, dry_run=True)
-
-    assert (memory_dir / "ghost.md").exists()  # not tombstoned
-    assert len(fake_api.memories) == 1  # nothing pushed
-    assert _parsed(memory_dir / "fresh.md")["id"] is None

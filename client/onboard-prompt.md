@@ -28,15 +28,15 @@ Onboard this machine as a Hydra client. Hydra is a cross-machine control plane f
 
        python -m hydra_cli project create --slug <short-name> --path <absolute-project-path>
 
-   Project-scoped memories won't push from cwds that aren't registered - `python -m hydra_cli sync` will log them as skipped. If a project with the same basename already exists on the server, auto-attach will bind this machine's path on the next sync.
+   Project-scoped memories cannot be pulled for cwds that aren't registered. If a project with the same basename already exists on the server, auto-attach will bind this machine's path on the next sync.
 
-5. Sync this machine's existing memories to the server. From EACH registered project directory:
+5. Pull server memories into each registered project's local mirror:
 
-       cd <project-path> && python -m hydra_cli sync --push
+       cd <project-path> && python -m hydra_cli sync
 
-   Upserts are by `(name, project_slug)`, so re-runs are safe. Report per-project counts.
+   Local mirror files are never uploaded. Create or edit memories on the dashboard or with `python -m hydra_cli memory ...`. Report per-project pull counts.
 
-6. Verify convergence on one project: `cd <project-path> && python -m hydra_cli sync` (bidirectional) should report `0 pushed, 0 pulled, 0 conflicts` - that's the real idempotency check. (`--pull` is an unconditional overwrite, so it always reports `pulled = <server count>`, which isn't what we want for verification.) Then `python -m hydra_cli memory list --all` should show the full set (bare `list` is scoped to the current project plus globals).
+6. Verify one project: `cd <project-path> && python -m hydra_cli sync` should pull the server set and rebuild `MEMORY.md`. Then `python -m hydra_cli memory list --all` should show the full set (bare `list` is scoped to the current project plus globals).
 
 7. Recommend (don't force) enabling Claude Code's "Enable Remote Control for all sessions" toggle via the `/config` slash command. This auto-enables Remote Control per session so each session is reachable from the Claude mobile app. On terminal (`claude` CLI) sessions Hydra's Stop hook auto-captures the `https://claude.ai/code/session_...` URL from the transcript; in VS Code, the extension writes no bridge record to the transcript so it has to be pasted once per session into the dashboard's session card field. Either way the card's "Open Remote Control" button deep-links to that specific session from anywhere.
 

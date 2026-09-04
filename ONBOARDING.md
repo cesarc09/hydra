@@ -91,15 +91,15 @@ python -m hydra_cli project create --slug <short-name> --path "$(pwd)"
 
 The slug identifies the project across machines - use the same slug everywhere. If a project with the same slug already exists (from another machine), `python -m hydra_cli sync` auto-attaches this machine's path by directory basename, so you only need to register brand-new projects manually.
 
-## 5. Upload this machine's existing memories
+## 5. Pull server memories to this machine
 
 From each project directory:
 
 ```bash
-python -m hydra_cli sync --push
+python -m hydra_cli sync
 ```
 
-Scope is derived from memory type: `user`/`feedback` → global; `project`/`reference` → pinned to the current project. Re-runs are safe (upsert).
+The local memory directory is a pull-only mirror. Create or edit memories on the dashboard or with `python -m hydra_cli memory ...`; local mirror files are never uploaded.
 
 ## 6. Verify
 

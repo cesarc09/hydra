@@ -32,9 +32,8 @@ PROJECT_TYPES = frozenset({"project", "reference"})
 def _type_for_scope(mem_type: str, project_slug: str | None) -> str:
     """Keep a memory's type consistent with its scope, in BOTH directions.
 
-    `hydra sync` derives a memory's scope from its type, so a row whose type and
-    scope disagree is unstable: the next Stop-hook push "corrects" it back, and
-    the human's intent is lost. Hence:
+    Scope is derived from type everywhere (CLI create, dashboard moves), so a
+    row whose type and scope disagree has no stable reading. Hence:
 
     - Pinned (project_slug set) + a global type -> coerced to 'project'. This is
       what auto-scopes the dashboard's Move-to-project.
@@ -100,9 +99,8 @@ async def upsert_memory(memory: MemoryCreate) -> MemoryItem:
     whatever its scope.
 
     A POST that would move an existing memory to a different scope is refused
-    with 409 unless `rescope` is set. Sync pushes by name when a mirror file has
-    no id, and a by-name push must never be able to silently unpin a memory
-    someone deliberately scoped to a project.
+    with 409 unless `rescope` is set: a by-name upsert must never be able to
+    silently unpin a memory someone deliberately scoped to a project.
     """
     db = await get_db()
     now = _now()

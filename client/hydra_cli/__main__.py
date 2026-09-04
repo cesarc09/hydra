@@ -15,7 +15,13 @@ from hydra_cli.commands import run_pull
 from hydra_cli.hooks import run_pull as run_hooks_pull
 from hydra_cli.prune import cmd_project_prune
 from hydra_cli.remote import cmd_capture_remote_url, scan_bridge_records
-from hydra_cli.sync import cmd_sync, fetch_server_memories, resolve_project_slug
+from hydra_cli.sync import (
+    MEMORY_INDEX,
+    cmd_sync,
+    fetch_server_memories,
+    parse_memory_file,
+    resolve_project_slug,
+)
 from hydra_cli.usage import cmd_report as _run_usage_report
 from hydra_cli.usage import run_backfill
 
@@ -359,6 +365,23 @@ def _fmt_offenders(items: list[str], cap: int = 5) -> str:
     return shown + (f" (+{extra} more)" if extra > 0 else "")
 
 
+def _stray_memory_files(projects_root: Path) -> list[str]:
+    """Return id-less or unparseable files from local memory mirrors."""
+    if not projects_root.is_dir():
+        return []
+    strays = []
+    for path in sorted(projects_root.glob("*/memory/*.md")):
+        if path.name == MEMORY_INDEX or not path.is_file():
+            continue
+        try:
+            parsed = parse_memory_file(path)
+        except (OSError, UnicodeError):
+            parsed = None
+        if parsed is None or parsed["id"] is None:
+            strays.append(str(path))
+    return strays
+
+
 # --- usage (token accounting) ---
 
 
@@ -431,7 +454,9 @@ def _claude_code_version() -> str | None:
     return found
 
 
-def cmd_doctor(args: argparse.Namespace) -> None:
+def cmd_doctor(
+    args: argparse.Namespace, *, projects_root: Path | None = None
+) -> None:
     """Deterministic instance diagnostics: connectivity, auth, stats, and data
     anomalies. Prints a compact report and exits 0 - status lives in the text,
     so a wrapper never loses the report to a non-zero exit code."""
@@ -544,6 +569,9 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         if m.get("project_slug") and m["project_slug"] not in slugs
     ]
     pathless = [p["slug"] for p in proj if not p.get("paths")]
+    if projects_root is None:
+        projects_root = Path.home() / ".claude" / "projects"
+    strays = _stray_memory_files(projects_root)
 
     def check(items: list[str], label: str) -> str:
         if not items:
@@ -557,6 +585,8 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     out.append(check(orphans, "memories pinned to an unregistered slug (orphans)"))
     out.append(check(pathless, "projects with no registered path"))
     out.append(check(pending, "projects pending review (auto-registered, unconfirmed)"))
+    if strays:
+        out.append(check(strays, "stray local memory files"))
 
     print("\n".join(out))
 
@@ -731,10 +761,9 @@ def build_parser() -> argparse.ArgumentParser:
     usm.add_argument("--since", help="ISO date/datetime, inclusive")
     usm.add_argument("--until", help="ISO date/datetime, exclusive")
 
-    # --- sync (no subcommand; flags drive direction) ---
-    sync = sub.add_parser("sync", help="reconcile memories between local dir and hydra")
-    sync.add_argument("--pull", action="store_true", help="download only")
-    sync.add_argument("--push", action="store_true", help="upload only")
+    # --- sync ---
+    sync = sub.add_parser("sync", help="pull memories into the local mirror")
+    sync.add_argument("--pull", action="store_true", help="compatibility no-op")
     sync.add_argument("--cwd", help="override cwd (hooks pass $PWD)")
     sync.add_argument("--dry-run", action="store_true")
 
