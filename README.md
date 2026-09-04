@@ -37,7 +37,7 @@ Two loops run continuously:
 
 **Observation loop** - every Claude Code tool call fires an HTTP hook to `/api/hooks/event`. The server tracks session state transitions (active / idle / waiting_input / ended) and broadcasts them over Server-Sent Events to any open dashboard.
 
-**Accounting loop** - a Stop hook runs `python -m hydra_cli usage report`, which parses the session's transcript and its subagents' and posts per-message token counts to `/api/usage/messages`. Rows are keyed on the API message id, so retries and `python -m hydra_cli usage backfill` are idempotent; `/usage` prices them server-side.
+**Accounting loop** - a Claude Code Stop hook runs `python -m hydra_cli usage report`, which parses the session's transcript and its subagents' and posts per-message token counts to `/api/usage/messages`. Codex Stop and SessionEnd hooks run `python -m hydra_cli usage sweep`, which incrementally scans all local rollout files. Rows are content-keyed, so retries, sweeps and `python -m hydra_cli usage backfill` are idempotent; `/usage` prices both subscriptions at notional API-equivalent rates.
 
 Same bearer token, same server, but the two loops don't depend on each other.
 
@@ -57,7 +57,7 @@ The per-harness text is one common markdown body carrying `{{slot}}` markers plu
 
 ### Codex CLI
 
-`bash client/setup.sh` sets up both harnesses: `setup_claude.sh` first, then `setup_codex.sh`, which exits silently when `codex` is not on `PATH`. It wires two hooks into `~/.codex/hooks.json`: `SessionStart` runs `python -m hydra_cli codex-session-start`, `PreToolUse` runs `python -m hydra_cli guard`. Codex does not run a new or changed hook until you trust it once - open Codex after setup and run `/hooks`.
+`bash client/setup.sh` sets up both harnesses: `setup_claude.sh` first, then `setup_codex.sh`, which exits silently when `codex` is not on `PATH`. It wires four hooks into `~/.codex/hooks.json`: `SessionStart` runs `python -m hydra_cli codex-session-start`, `PreToolUse` runs `python -m hydra_cli guard`, and `Stop` and `SessionEnd` run `python -m hydra_cli usage sweep`. Codex does not run a new or changed hook until you trust it once - open Codex after setup and run `/hooks`. Trust is a per-entry hash in `~/.codex/config.toml` that `setup.sh` cannot pre-fill, and an untrusted hook is skipped without an error; `codex exec` prints `hook: <Event>` for each hook that fires, which is the quickest check. Deploy and restart the server before running the new `setup.sh` on any machine: the sweep sends nothing to a server that lacks the `harness` column (its `group_by=harness` probe returns 422), because that server would file Codex rows as `claude-code` for good.
 
 ### Memory writes
 
@@ -179,8 +179,8 @@ Three pages, all behind the bearer token:
   - Click a memory name to expand its body inline.
   - Per memory: **Delete**, **Move to project**, **Move to global** (pick new `user` / `feedback` type), and **Move to projects** to split a global memory across several (each copy is named `<name>-<slug>`, since names are globally unique). Re-scoping happens in place, so a memory keeps its id and its mirror files stay valid. Read-only bodies - edits still go through `python -m hydra_cli sync`.
   - Stats header: project count and memory count, split global vs project-scoped.
-- **`/usage` - Token accounting.** Cost and tokens across machines, by day / project / model / subagent.
-  - Range chips (7d / 30d / 90d / all); the machine filter appears once a second machine reports. Unknown models are counted but left unpriced, never shown as $0.
+- **`/usage` - Token accounting.** Cost and tokens across machines and harnesses, by day / project / model / subagent.
+  - Range chips (7d / 30d / 90d / all); machine and harness filters appear once a second value reports. Unknown models are counted but left unpriced, never shown as $0.
 
 ## Session State Machine
 

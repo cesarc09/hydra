@@ -281,6 +281,38 @@ async def test_group_by_agent_and_instance(client):
     assert {r["key"] for r in machines["rows"]} == {"pi", "laptop"}
 
 
+async def test_harness_defaults_groups_and_filters(client):
+    await _post(client, "s1", [_msg("m1")], instance="pi")
+    await _post(
+        client,
+        "s2",
+        [_msg("m2", harness="codex-cli", model="gpt-5.6-sol")],
+        instance="laptop",
+    )
+
+    harnesses = (await client.get("/api/usage/summary?group_by=harness")).json()
+    assert {r["key"] for r in harnesses["rows"]} == {"claude-code", "codex-cli"}
+
+    codex = (
+        await client.get(
+            "/api/usage/summary?group_by=instance&harness=codex-cli"
+        )
+    ).json()
+    assert [(row["key"], row["messages"]) for row in codex["rows"]] == [
+        ("laptop", 1)
+    ]
+    assert codex["harness"] == "codex-cli"
+
+    claude = (
+        await client.get(
+            "/api/usage/summary?group_by=harness&instance=pi"
+        )
+    ).json()
+    assert [(row["key"], row["messages"]) for row in claude["rows"]] == [
+        ("claude-code", 1)
+    ]
+
+
 async def test_instance_filter(client):
     await _post(client, "s1", [_msg("m1"), _msg("m2")], instance="pi")
     await _post(client, "s2", [_msg("m3")], instance="laptop")

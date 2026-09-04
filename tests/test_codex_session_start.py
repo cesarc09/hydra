@@ -146,9 +146,53 @@ def test_codex_setup_wires_fresh_file_and_is_idempotent(setup_env):
             ],
         }
     ]
+    assert hooks["Stop"] == [
+        {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "python -m hydra_cli usage sweep",
+                    "timeout": 10,
+                }
+            ]
+        }
+    ]
+    assert hooks["SessionEnd"] == [
+        {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "python -m hydra_cli usage sweep",
+                    "timeout": 3,
+                }
+            ]
+        }
+    ]
     assert codex_mod.run_setup() == 0
     assert path.read_bytes() == first
     assert pulls == ["codex-cli", "codex-cli"]
+
+
+def test_codex_setup_preserves_existing_entries(setup_env):
+    path, _pulls = setup_env
+    path.parent.mkdir()
+    existing = {
+        event: [{"matcher": matcher, "hooks": [dict(entry)]}]
+        for event, (matcher, entry) in list(codex_mod._HOOKS.items())[:2]
+    }
+    before = {
+        event: json.dumps(groups, separators=(",", ":")).encode()
+        for event, groups in existing.items()
+    }
+    path.write_text(json.dumps({"hooks": existing}))
+
+    assert codex_mod.run_setup() == 0
+    written = json.loads(path.read_text())["hooks"]
+    after = {
+        event: json.dumps(written[event], separators=(",", ":")).encode()
+        for event in existing
+    }
+    assert after == before
 
 
 def test_codex_setup_collapses_stale_entries_and_keeps_foreign(setup_env):

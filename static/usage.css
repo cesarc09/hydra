@@ -20,7 +20,7 @@
 }
 
 .uz-toolbar { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; margin-bottom: 1rem; }
-/* Ranges stay right-aligned whether or not the machine filter is present. */
+/* Ranges stay right-aligned whether or not the filters are present. */
 .uz-chips-end { margin-left: auto; }
 .uz-chips { display: flex; gap: 0.35rem; flex-wrap: wrap; }
 .uz-chip {

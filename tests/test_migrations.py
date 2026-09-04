@@ -280,3 +280,29 @@ async def test_empty_legacy_claude_md_creates_no_instructions(tmp_path: Path):
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'claude_md'"
     )
     await conn.close()
+
+
+async def test_migration_adds_usage_harness_with_default(tmp_path: Path):
+    conn = await aiosqlite.connect(tmp_path / "legacy-usage.db")
+    conn.row_factory = aiosqlite.Row
+    await conn.executescript(SCHEMA_PATH.read_text())
+    await conn.execute("DROP TABLE usage_messages")
+    await conn.execute(
+        "CREATE TABLE usage_messages (message_id TEXT PRIMARY KEY, model TEXT)"
+    )
+    await conn.execute(
+        "INSERT INTO usage_messages (message_id, model) VALUES ('old', 'model')"
+    )
+
+    await db_module._migrate(conn)
+    await conn.commit()
+    row = next(iter(await conn.execute_fetchall(
+        "SELECT harness FROM usage_messages WHERE message_id = 'old'"
+    )))
+    assert row["harness"] == "claude-code"
+
+    info = await conn.execute_fetchall("PRAGMA table_info(usage_messages)")
+    harness = next(row for row in info if row["name"] == "harness")
+    assert harness["notnull"] == 1
+    assert harness["dflt_value"] == "'claude-code'"
+    await conn.close()

@@ -155,6 +155,7 @@ CREATE TABLE IF NOT EXISTS usage_messages (
     message_id   TEXT PRIMARY KEY,
     session_id   TEXT NOT NULL,
     instance_id  TEXT NOT NULL,
+    harness      TEXT NOT NULL DEFAULT 'claude-code',
     ts           TEXT NOT NULL,      -- record timestamp from the transcript
     cwd          TEXT,               -- resolved to a project at query time
     model        TEXT NOT NULL,

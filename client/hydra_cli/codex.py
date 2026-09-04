@@ -17,7 +17,7 @@ from hydra_cli.sync import MEMORY_INDEX, memory_dir_for_cwd, run_sync
 # (measured 2026-09-04, 0.150.1); over the cap, whole lines are kept and the
 # remainder is counted so the agent knows to read the file.
 _CONTEXT_CAP = 32000
-_HOOKS: dict[str, tuple[str, dict[str, Any]]] = {
+_HOOKS: dict[str, tuple[str | None, dict[str, Any]]] = {
     "SessionStart": (
         "startup|resume|clear|compact",
         {
@@ -33,6 +33,22 @@ _HOOKS: dict[str, tuple[str, dict[str, Any]]] = {
             "type": "command",
             "command": "python -m hydra_cli guard",
             "timeout": 10,
+        },
+    ),
+    "Stop": (
+        None,
+        {
+            "type": "command",
+            "command": "python -m hydra_cli usage sweep",
+            "timeout": 10,
+        },
+    ),
+    "SessionEnd": (
+        None,
+        {
+            "type": "command",
+            "command": "python -m hydra_cli usage sweep",
+            "timeout": 3,
         },
     ),
 }
@@ -116,7 +132,7 @@ def _write_hooks(path: Path, config: dict[str, Any]) -> None:
 
 
 def _wire_event(
-    hooks: dict[str, Any], event: str, matcher: str, expected: dict[str, Any]
+    hooks: dict[str, Any], event: str, matcher: str | None, expected: dict[str, Any]
 ) -> str:
     groups = hooks.setdefault(event, [])
     if not isinstance(groups, list):
@@ -142,12 +158,20 @@ def _wire_event(
         and entry["command"].startswith("python -m hydra_cli ")
     ]
     if not stale:
-        groups.append({"matcher": matcher, "hooks": [expected]})
+        group: dict[str, Any] = {"hooks": [expected]}
+        if matcher is not None:
+            group["matcher"] = matcher
+        groups.append(group)
         return "wired"
 
     first = stale[0]
     first.clear()
     first.update(expected)
+    if matcher is None:
+        for group in groups:
+            if first in group["hooks"]:
+                group.pop("matcher", None)
+                break
     extras = {id(entry) for entry in stale[1:]}
     kept_groups = []
     for group in groups:

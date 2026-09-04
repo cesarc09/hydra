@@ -207,6 +207,7 @@ class UsageMessage(BaseModel):
     message_id: str = Field(min_length=1, max_length=128)
     ts: str = Field(min_length=1, max_length=64)
     model: str = Field(min_length=1, max_length=128)
+    harness: str = Field(default="claude-code", min_length=1, max_length=32)
     cwd: str | None = Field(default=None, max_length=4096)
     effort: str | None = Field(default=None, max_length=32)
     is_subagent: bool = False

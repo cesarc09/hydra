@@ -115,6 +115,14 @@ async def _migrate(conn: aiosqlite.Connection) -> None:
             "ALTER TABLE project_paths ADD COLUMN auto_registered_at TEXT"
         )
 
+    cursor = await conn.execute("PRAGMA table_info(usage_messages)")
+    usage_cols = {row[1] for row in await cursor.fetchall()}
+    if "harness" not in usage_cols:
+        await conn.execute(
+            "ALTER TABLE usage_messages ADD COLUMN harness TEXT NOT NULL"
+            " DEFAULT 'claude-code'"
+        )
+
 
 async def _has_unique_name_index(conn: aiosqlite.Connection) -> bool:
     """True if a full (non-partial) UNIQUE index over exactly (name) exists.

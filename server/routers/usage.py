@@ -24,7 +24,7 @@ router = APIRouter(
     prefix="/api/usage", tags=["usage"], dependencies=[Depends(require_auth)]
 )
 
-GroupBy = Literal["day", "model", "project", "instance", "agent"]
+GroupBy = Literal["day", "model", "project", "instance", "harness", "agent"]
 
 # The counter columns, in one place: summed in SQL, echoed in the response, and
 # fed to the pricer. Adding a counter means touching only this tuple + schema.
@@ -57,6 +57,7 @@ _GROUP_SQL: dict[str, str] = {
     "day": "substr(u.ts, 1, 10)",
     "model": "u.model",
     "instance": "u.instance_id",
+    "harness": "u.harness",
     "agent": (
         "CASE WHEN u.is_subagent = 0 THEN 'main'"
         " ELSE COALESCE(u.agent_type, 'subagent') END"
@@ -93,15 +94,15 @@ async def ingest_usage(
     received_at = _now()
     await db.executemany(
         "INSERT OR IGNORE INTO usage_messages ("
-        " message_id, session_id, instance_id, ts, cwd, model, effort,"
+        " message_id, session_id, instance_id, harness, ts, cwd, model, effort,"
         " is_subagent, agent_type, service_tier, speed,"
         " input_tokens, output_tokens, cache_read_tokens,"
         " cache_write_5m_tokens, cache_write_1h_tokens,"
         " web_search_requests, web_fetch_requests, received_at"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (
-                m.message_id, batch.session_id, x_instance_id, m.ts, m.cwd,
+                m.message_id, batch.session_id, x_instance_id, m.harness, m.ts, m.cwd,
                 m.model, m.effort, int(m.is_subagent), m.agent_type,
                 m.service_tier, m.speed,
                 m.input_tokens, m.output_tokens, m.cache_read_tokens,
@@ -156,6 +157,7 @@ async def usage_summary(
     since: str | None = Query(default=None, description="ISO date/datetime, inclusive"),
     until: str | None = Query(default=None, description="ISO date/datetime, exclusive"),
     instance: str | None = Query(default=None, description="restrict to one machine"),
+    harness: str | None = Query(default=None, description="restrict to one harness"),
 ):
     """Grouped token totals plus reconstructed cost.
 
@@ -178,6 +180,9 @@ async def usage_summary(
     if instance:
         where.append("u.instance_id = ?")
         params.append(instance)
+    if harness:
+        where.append("u.harness = ?")
+        params.append(harness)
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
 
     sums = ", ".join(f"SUM(u.{c}) AS {c}" for c in _COUNTERS)
@@ -219,6 +224,7 @@ async def usage_summary(
         "since": since,
         "until": until,
         "instance": instance,
+        "harness": harness,
         "rows": out,
         "totals": totals,
         "unpriced_models": sorted(unpriced_models),

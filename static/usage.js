@@ -28,6 +28,7 @@ const COMPOSITION = [
 
 let activeRange = RANGES[1];
 let activeInstance = null;   // null = every machine
+let activeHarness = null;    // null = every harness
 let lastData = null;
 
 const $ = (id) => document.getElementById(id);
@@ -109,6 +110,36 @@ function renderMachines(rows) {
     picker.querySelectorAll("[data-machine]").forEach((el) => {
         el.onclick = () => {
             activeInstance = el.dataset.machine || null;
+            refresh();
+        };
+    });
+    return reset;
+}
+
+// --- harness filter ------------------------------------------------------
+function renderHarnesses(rows) {
+    const picker = $("harness-picker");
+    if (rows.length < 2) {
+        picker.hidden = true;
+        picker.innerHTML = "";
+        const had = activeHarness !== null;
+        activeHarness = null;
+        return had;
+    }
+    let reset = false;
+    if (activeHarness && !rows.some((r) => r.key === activeHarness)) {
+        activeHarness = null;
+        reset = true;
+    }
+    picker.hidden = false;
+    const chip = (key, label, on) =>
+        `<span class="uz-chip${on ? " active" : ""}" data-harness="${escHtml(key)}">${escHtml(label)}</span>`;
+    picker.innerHTML =
+        chip("", "All harnesses", !activeHarness) +
+        rows.map((r) => chip(r.key, `${r.key} · ${fmtCost(r.cost_usd)}`, activeHarness === r.key)).join("");
+    picker.querySelectorAll("[data-harness]").forEach((el) => {
+        el.onclick = () => {
+            activeHarness = el.dataset.harness || null;
             refresh();
         };
     });
@@ -317,22 +348,27 @@ function sinceParam() {
 async function refresh() {
     const since = sinceParam();
     const window_ = since ? `&since=${since}` : "";
-    const scoped = window_ + (activeInstance ? `&instance=${encodeURIComponent(activeInstance)}` : "");
+    const instanceScope = activeInstance ? `&instance=${encodeURIComponent(activeInstance)}` : "";
+    const harnessScope = activeHarness ? `&harness=${encodeURIComponent(activeHarness)}` : "";
+    const scoped = window_ + instanceScope + harnessScope;
     const get = async (query) => {
         const r = await apiFetch(`${API}/usage/summary?${query}`);
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
     };
     try {
-        // Machines come from the unscoped window; everything else is scoped.
-        const [machines, ...res] = await Promise.all([
-            get(`group_by=instance${window_}`),
+        // Each filter list is scoped by the other filter, never by itself.
+        const [machines, harnesses, ...res] = await Promise.all([
+            get(`group_by=instance${window_}${harnessScope}`),
+            get(`group_by=harness${window_}${instanceScope}`),
             ...GROUPS.map((g) => get(`group_by=${g}${scoped}`)),
         ]);
         const d = Object.fromEntries(GROUPS.map((g, i) => [g, res[i]]));
         lastData = d;
 
-        if (renderMachines(machines.rows)) return refresh();
+        const resetMachine = renderMachines(machines.rows);
+        const resetHarness = renderHarnesses(harnesses.rows);
+        if (resetMachine || resetHarness) return refresh();
         renderKpis(d.day.totals, d.day.rows);
         renderDaily(d.day.rows);
         renderComposition(d.day.totals);

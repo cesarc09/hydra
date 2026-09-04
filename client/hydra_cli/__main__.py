@@ -34,6 +34,7 @@ from hydra_cli.sync import (
 )
 from hydra_cli.usage import cmd_report as _run_usage_report
 from hydra_cli.usage import run_backfill
+from hydra_cli.usage_codex import cmd_sweep as _run_usage_sweep
 
 
 def _die(status: int, body: str) -> None:
@@ -436,6 +437,10 @@ def cmd_usage_backfill(args: argparse.Namespace) -> None:
     sys.exit(run_backfill(args.root))
 
 
+def cmd_usage_sweep(args: argparse.Namespace) -> None:
+    sys.exit(_run_usage_sweep(args))
+
+
 def cmd_usage_summary(args: argparse.Namespace) -> None:
     query = f"?group_by={args.group_by}"
     if args.since:
@@ -815,12 +820,17 @@ def build_parser() -> argparse.ArgumentParser:
         "backfill", help="import every transcript on this machine (re-runnable)"
     )
     ubf.add_argument("--root", help="transcript root (default ~/.claude/projects)")
+    usw = usage_sub.add_parser(
+        "sweep", help="scan Codex rollouts and send new token usage to Hydra"
+    )
+    usw.add_argument("--root", help="rollout root (default ~/.codex/sessions)")
+    usw.add_argument("--reset", action="store_true", help="re-send every rollout")
     usm = usage_sub.add_parser("summary", help="print aggregated usage")
     usm.add_argument(
         "--group-by",
         dest="group_by",
         default="day",
-        choices=["day", "model", "project", "instance", "agent"],
+        choices=["day", "model", "project", "instance", "harness", "agent"],
     )
     usm.add_argument("--since", help="ISO date/datetime, inclusive")
     usm.add_argument("--until", help="ISO date/datetime, exclusive")
@@ -891,6 +901,7 @@ DISPATCH = {
     ("skills", "pull"): cmd_skills_pull,
     ("usage", "report"): cmd_usage_report,
     ("usage", "backfill"): cmd_usage_backfill,
+    ("usage", "sweep"): cmd_usage_sweep,
     ("usage", "summary"): cmd_usage_summary,
     ("sync", None): cmd_sync,
     ("codex-session-start", None): cmd_codex_session_start,
