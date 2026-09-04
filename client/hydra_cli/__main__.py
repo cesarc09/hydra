@@ -19,6 +19,7 @@ from hydra_cli.codex import (
     run_setup as run_codex_setup,
 )
 from hydra_cli.commands import run_pull as run_commands_pull
+from hydra_cli.guard import main as run_guard_main
 from hydra_cli.hooks import run_pull as run_hooks_pull
 from hydra_cli.prune import cmd_project_prune
 from hydra_cli.remote import cmd_capture_remote_url, scan_bridge_records
@@ -345,6 +346,10 @@ def cmd_codex_session_start(args: argparse.Namespace) -> None:
 
 def cmd_codex_setup(args: argparse.Namespace) -> None:
     sys.exit(run_codex_setup())
+
+
+def cmd_guard(args: argparse.Namespace) -> None:
+    run_guard_main()
 
 
 def cmd_hooks_put(args: argparse.Namespace) -> None:
@@ -828,6 +833,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("codex-session-start", help="Codex SessionStart hook entry")
     sub.add_parser("codex-setup", help="wire the Codex SessionStart hook")
+    sub.add_parser("guard", help="deny memory writes outside a human-gated flow")
 
     # --- doctor (instance health + stats + anomaly checks) ---
     sub.add_parser("doctor", help="diagnose this Hydra instance (health, stats, anomalies)")
@@ -889,6 +895,7 @@ DISPATCH = {
     ("sync", None): cmd_sync,
     ("codex-session-start", None): cmd_codex_session_start,
     ("codex-setup", None): cmd_codex_setup,
+    ("guard", None): cmd_guard,
     ("doctor", None): cmd_doctor,
     ("capture-remote-url", None): cmd_capture_remote_url,
     ("apply-settings", None): cmd_apply_settings,
@@ -916,6 +923,7 @@ def main() -> None:
         "apply-settings",
         "codex-session-start",
         "codex-setup",
+        "guard",
     }
     if args.group not in leaf_groups and not command:
         parser.print_help()

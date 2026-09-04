@@ -58,6 +58,30 @@ def test_session_start_pulls_rendered_instructions():
     assert "/api/config/claude-md" not in settings
 
 
+def test_memory_guard_is_wired_for_write_tools() -> None:
+    groups = json.loads(SETTINGS.read_text())["hooks"]["PreToolUse"]
+    guards = [
+        group
+        for group in groups
+        if any(
+            hook.get("command") == "python -m hydra_cli guard"
+            for hook in group.get("hooks", [])
+        )
+    ]
+    assert guards == [
+        {
+            "matcher": "Write|Edit|NotebookEdit|Bash",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "python -m hydra_cli guard",
+                    "timeout": 10,
+                }
+            ],
+        }
+    ]
+
+
 def expand(expr: str, *, cwd: Path, env: dict[str, str]) -> str:
     """Expand a shell expression the way the hook runtime would."""
     assert _SH is not None  # guaranteed by pytestmark

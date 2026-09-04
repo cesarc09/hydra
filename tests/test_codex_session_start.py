@@ -105,7 +105,8 @@ def test_codex_setup_wires_fresh_file_and_is_idempotent(setup_env):
     assert codex_mod.run_setup() == 0
     first = path.read_bytes()
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert json.loads(first)["hooks"]["SessionStart"] == [
+    hooks = json.loads(first)["hooks"]
+    assert hooks["SessionStart"] == [
         {
             "matcher": "startup|resume|clear|compact",
             "hooks": [
@@ -114,6 +115,18 @@ def test_codex_setup_wires_fresh_file_and_is_idempotent(setup_env):
                     "command": "python -m hydra_cli codex-session-start",
                     "timeout": 20,
                     "statusMessage": "Syncing Hydra context",
+                }
+            ],
+        }
+    ]
+    assert hooks["PreToolUse"] == [
+        {
+            "matcher": "Bash|apply_patch",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "python -m hydra_cli guard",
+                    "timeout": 10,
                 }
             ],
         }
@@ -167,7 +180,7 @@ def test_codex_setup_collapses_stale_entries_and_keeps_foreign(setup_env):
     assert len(groups) == 1
     group = groups[0]
     assert group["matcher"] == "old-one"
-    assert group["hooks"][0] == codex_mod._ENTRY
+    assert group["hooks"][0] == codex_mod._HOOKS["SessionStart"][1]
     assert group["hooks"][1] == {"type": "command", "command": "foreign command"}
     assert sum(
         entry.get("command") == "python -m hydra_cli codex-session-start"
@@ -175,6 +188,62 @@ def test_codex_setup_collapses_stale_entries_and_keeps_foreign(setup_env):
         for entry in current["hooks"]
     ) == 1
     assert all(current["hooks"] for current in groups)
+
+
+@pytest.mark.parametrize("stale_event", ["SessionStart", "PreToolUse"])
+def test_codex_setup_rewrites_stale_event_without_touching_other(
+    setup_env, stale_event: str
+):
+    path, _pulls = setup_env
+    path.parent.mkdir()
+    other_event = "PreToolUse" if stale_event == "SessionStart" else "SessionStart"
+    hooks = {
+        event: [
+            {
+                "matcher": matcher,
+                "hooks": [dict(entry)],
+            }
+        ]
+        for event, (matcher, entry) in codex_mod._HOOKS.items()
+    }
+    hooks[stale_event][0]["hooks"][0] = {
+        "type": "command",
+        "command": "python -m hydra_cli obsolete",
+        "timeout": 1,
+    }
+    hooks[stale_event].append(
+        {
+            "matcher": "stale-extra",
+            "hooks": [{"command": "python -m hydra_cli older"}],
+        }
+    )
+    untouched = json.loads(json.dumps(hooks[other_event]))
+    path.write_text(json.dumps({"hooks": hooks}))
+
+    assert codex_mod.run_setup() == 0
+    written = json.loads(path.read_text())["hooks"]
+    assert written[other_event] == untouched
+    assert written[stale_event][0]["hooks"][0] == codex_mod._HOOKS[stale_event][1]
+    assert len(written[stale_event]) == 1
+
+
+def test_codex_setup_keeps_foreign_pretooluse_entry(setup_env):
+    path, _pulls = setup_env
+    path.parent.mkdir()
+    foreign = {"type": "command", "command": "check-something-else"}
+    path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [{"matcher": "Read", "hooks": [foreign]}],
+                }
+            }
+        )
+    )
+    assert codex_mod.run_setup() == 0
+    groups = json.loads(path.read_text())["hooks"]["PreToolUse"]
+    assert groups[0]["hooks"] == [foreign]
+    assert groups[1]["hooks"][0] == codex_mod._HOOKS["PreToolUse"][1]
 
 
 @pytest.mark.parametrize("contents", ["[]", "not json"])

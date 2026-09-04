@@ -14,16 +14,24 @@ from hydra_cli.skills import codex_home, run_pull
 from hydra_cli.sync import MEMORY_INDEX, memory_dir_for_cwd, run_sync
 
 _CONTEXT_CAP = 8000
-_COMMAND = "python -m hydra_cli codex-session-start"
-_ENTRY: dict[str, Any] = {
-    "type": "command",
-    "command": _COMMAND,
-    "timeout": 20,
-    "statusMessage": "Syncing Hydra context",
-}
-_GROUP: dict[str, Any] = {
-    "matcher": "startup|resume|clear|compact",
-    "hooks": [_ENTRY],
+_HOOKS: dict[str, tuple[str, dict[str, Any]]] = {
+    "SessionStart": (
+        "startup|resume|clear|compact",
+        {
+            "type": "command",
+            "command": "python -m hydra_cli codex-session-start",
+            "timeout": 20,
+            "statusMessage": "Syncing Hydra context",
+        },
+    ),
+    "PreToolUse": (
+        "Bash|apply_patch",
+        {
+            "type": "command",
+            "command": "python -m hydra_cli guard",
+            "timeout": 10,
+        },
+    ),
 }
 
 
@@ -89,6 +97,49 @@ def _write_hooks(path: Path, config: dict[str, Any]) -> None:
         tmp.unlink(missing_ok=True)
 
 
+def _wire_event(
+    hooks: dict[str, Any], event: str, matcher: str, expected: dict[str, Any]
+) -> str:
+    groups = hooks.setdefault(event, [])
+    if not isinstance(groups, list):
+        raise ValueError(f"hooks.{event} is not a list")
+
+    entries: list[dict[str, Any]] = []
+    for group in groups:
+        if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+            raise ValueError(f"hooks.{event} contains an invalid group")
+        for entry in group["hooks"]:
+            if not isinstance(entry, dict):
+                raise ValueError(f"hooks.{event} contains an invalid entry")
+            entries.append(entry)
+
+    command = expected["command"]
+    if any(entry.get("command") == command for entry in entries):
+        return "already wired"
+
+    stale = [
+        entry
+        for entry in entries
+        if isinstance(entry.get("command"), str)
+        and entry["command"].startswith("python -m hydra_cli ")
+    ]
+    if not stale:
+        groups.append({"matcher": matcher, "hooks": [expected]})
+        return "wired"
+
+    first = stale[0]
+    first.clear()
+    first.update(expected)
+    extras = {id(entry) for entry in stale[1:]}
+    kept_groups = []
+    for group in groups:
+        group["hooks"] = [entry for entry in group["hooks"] if id(entry) not in extras]
+        if group["hooks"]:
+            kept_groups.append(group)
+    groups[:] = kept_groups
+    return "rewritten"
+
+
 def run_setup() -> int:
     path = hooks_path()
     if path.is_symlink():
@@ -104,53 +155,17 @@ def run_setup() -> int:
         hooks = config.setdefault("hooks", {})
         if not isinstance(hooks, dict):
             raise ValueError("hooks is not an object")
-        session_start = hooks.setdefault("SessionStart", [])
-        if not isinstance(session_start, list):
-            raise ValueError("hooks.SessionStart is not a list")
-
-        entries: list[dict[str, Any]] = []
-        for group in session_start:
-            if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
-                raise ValueError("hooks.SessionStart contains an invalid group")
-            for entry in group["hooks"]:
-                if not isinstance(entry, dict):
-                    raise ValueError("hooks.SessionStart contains an invalid entry")
-                entries.append(entry)
-
-        if any(entry.get("command") == _COMMAND for entry in entries):
-            action = "already wired"
-            changed = False
-        else:
-            stale = [
-                entry
-                for entry in entries
-                if isinstance(entry.get("command"), str)
-                and entry["command"].startswith("python -m hydra_cli ")
-            ]
-            if stale:
-                first = stale[0]
-                first.clear()
-                first.update(_ENTRY)
-                extras = {id(entry) for entry in stale[1:]}
-                kept_groups = []
-                for group in session_start:
-                    group["hooks"] = [
-                        entry for entry in group["hooks"] if id(entry) not in extras
-                    ]
-                    if group["hooks"]:
-                        kept_groups.append(group)
-                session_start[:] = kept_groups
-                action = "rewritten"
-            else:
-                session_start.append(_GROUP)
-                action = "wired"
-            changed = True
+        actions = [
+            f"{event} {_wire_event(hooks, event, matcher, entry)}"
+            for event, (matcher, entry) in _HOOKS.items()
+        ]
+        changed = any(not action.endswith("already wired") for action in actions)
         if changed:
             _write_hooks(path, config)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"codex-setup refused hooks file: {path}: {exc}", file=sys.stderr)
         return 1
 
-    # Codex trusts hook bytes by a trusted_hash confirmed by the user via /hooks.
-    print(f"  codex-setup: {action}: {path}")
+    # New or changed hooks are skipped until the user trusts them via /hooks.
+    print(f"  codex-setup: {', '.join(actions)}: {path}")
     return run_pull("codex-cli")

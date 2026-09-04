@@ -70,12 +70,13 @@ server/
     slug.py            - Slug normalization + stoplist for auto-registered projects
 client/
   hydra_cli/
-    __main__.py            - CLI dispatch (memory, project, config, commands, hooks, skills,
+    __main__.py            - CLI dispatch (memory, project, config, commands, hooks, skills, guard,
                               sync, usage, doctor, Codex hooks, capture-remote-url,
                               apply-settings)
     api.py                 - Stdlib urllib + bearer token + custom headers
     author.py              - Last-writer authorship for `memory create|update`: harness + session
                               from the env, model from the newest transcript record or --model
+    guard.py               - PreToolUse guard for direct mirror edits and unmarked CLI writes
     sync.py                - Memory sync, keyed on the server row id (stamped into each
                               mirror file's frontmatter). Frontmatter parse, collision-free
                               filename assignment, tombstones, MEMORY.md regen
@@ -160,6 +161,7 @@ tests/
   test_session_cwd.py - Hook + CLI cwd pinning: CLAUDE_PROJECT_DIR beats a drifted
                         $PWD, fallback retained (parses the shipped hook commands)
   test_codex_session_start.py - Codex hook JSON/context output and hooks.json setup
+  test_guard.py       - Cross-harness memory-write guard and fail-open behavior
   test_statusline.py  - Status-line render: bar, 250k SPLIT gate, cache countdown
   test_startup.py     - Fail-closed startup guard
   test_usage.py       - /api/usage ingest idempotence (replay, cross-session id, no FK)
@@ -183,6 +185,7 @@ schema.sql            - DDL; sessions.archived_at, memories project_slug FK + UN
   - **An empty server is never authority to delete.** A wrong `HYDRA_URL`, a fresh DB and a half-restored backup all look exactly like "everything was deleted", and the mirror may be the only copy left. `run_sync` checks the whole corpus (`fetch_whole_corpus()`, fetched once and lazily), not the project's slice, so a project with no memories of its own still prunes correctly. Prune also keeps unparseable files and id-less files whose names are absent from the server. With an authoritative server, these strays stay on disk but are omitted from `MEMORY.md`; without authority, the index is rebuilt from disk.
 - **Memory scope:** type=user/feedback -> global (project_slug=NULL); type=project/reference -> pinned to a registered project. The dashboard and `hydra memory ...` are the edit paths; sync only mirrors server state.
 - **Memory authorship:** `author_harness`, `author_session_id` and `author_model` describe the last writer. POST and PUT replace all three; absent means null. The migration backfills only newly-added `author_harness` columns with `claude-code`. The CLI gets harness and session from its environment and model from `--model` or the newest matching transcript record.
+- **Memory guard:** `python -m hydra_cli guard` denies direct writes under Claude's memory mirrors and `memory create|update|delete` commands without `--flow`; both Claude Code and Codex wire it at `PreToolUse`. It allows reads and marked human-gated writes, and malformed or unexpected payloads fail open so a broken guard never blocks every tool call.
 - **Flow marker:** POST/PUT/DELETE `/api/memory` require `X-Hydra-Flow` or return 428. It is a tripwire, not authorisation; the CLI exposes `--flow`, the UI sends constant `dashboard`, and CORS allows the header.
 - **Type<->scope invariant, enforced in BOTH directions** (`_type_for_scope` in `routers/memory.py`, on upsert *and* update). Pinned + a global type -> coerced to `project` (this is what auto-scopes the dashboard's Move-to-project). Global + a project-scoped type -> **422**, because there is no way to guess user vs feedback; the caller has to say. So `hydra memory update <id> --global` requires `--type user|feedback`, and the dashboard's Move-to-Global asks for one.
 - **Skills store:** `skills` holds instructions and behavioural-skill metadata; `skill_variants` holds one common markdown body plus optional harness slot maps. Markers are exactly `{{name}}` for lowercase identifier names, rendered in one pass. Validation covers only variants present, and a missing harness variant leaves common byte-identical. Full publishes run under one shared lock. `/api/config/claude-md` round-trips raw `instructions/common`, while SessionStart pulls the rendered harness map. Migration copies a legacy blob only when no instructions row exists, then always drops `claude_md`.
