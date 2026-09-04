@@ -1,5 +1,9 @@
 """Model rate table for pricing usage_messages rows.
 
+Rates:
+- https://platform.claude.com/docs/en/about-claude/pricing
+- https://developers.openai.com/api/docs/pricing
+
 Cost is computed HERE, at query time, and never stored on the row - so
 correcting a rate retroactively fixes every historical figure the dashboard
 shows. `usage_messages` holds only token counts.
@@ -12,31 +16,39 @@ wrong, so unpriced rows are counted and surfaced instead.
 from __future__ import annotations
 
 import re
+from typing import NamedTuple
 
-# USD per million tokens: model id -> (input, output).
+
+class Rate(NamedTuple):
+    input: float
+    output: float
+    cache_read_mult: float = 0.1
+
+# USD per million tokens.
 # Only rates we can actually cite live here; anything else is deliberately
-# unpriced rather than guessed. All current models serve their 1M context at
-# these standard rates - there is no long-context premium, which is why the
-# `[1m]` routing suffix needs no dimension of its own.
-RATES: dict[str, tuple[float, float]] = {
-    "claude-fable-5": (10.0, 50.0),
-    "claude-mythos-5": (10.0, 50.0),
-    "claude-opus-5": (5.0, 25.0),
-    "claude-opus-4-8": (5.0, 25.0),
-    "claude-opus-4-7": (5.0, 25.0),
-    "claude-opus-4-6": (5.0, 25.0),
-    "claude-opus-4-5": (5.0, 25.0),
-    # Sonnet 5 has introductory pricing of $2/$10 through 2026-08-31; we bill it
-    # at the standard rate rather than encode a date-windowed rate, so figures
-    # in that window read slightly high.
-    "claude-sonnet-5": (3.0, 15.0),
-    "claude-sonnet-4-6": (3.0, 15.0),
-    "claude-sonnet-4-5": (3.0, 15.0),
-    "claude-haiku-4-5": (1.0, 5.0),
+# unpriced rather than guessed. Current Claude models serve their 1M context
+# at these standard rates, so the `[1m]` suffix needs no dimension of its own.
+RATES: dict[str, Rate] = {
+    "claude-fable-5-1": Rate(10.0, 50.0, 0.025),
+    "claude-mythos-5-1": Rate(10.0, 50.0, 0.025),
+    "claude-fable-5": Rate(10.0, 50.0),
+    "claude-mythos-5": Rate(10.0, 50.0),
+    "claude-opus-5": Rate(5.0, 25.0),
+    "claude-opus-4-8": Rate(5.0, 25.0),
+    "claude-opus-4-7": Rate(5.0, 25.0),
+    "claude-opus-4-6": Rate(5.0, 25.0),
+    "claude-opus-4-5": Rate(5.0, 25.0),
+    "claude-sonnet-5": Rate(2.0, 10.0),
+    "claude-sonnet-4-6": Rate(3.0, 15.0),
+    "claude-sonnet-4-5": Rate(3.0, 15.0),
+    "claude-haiku-4-5": Rate(1.0, 5.0),
+    # Promotional - available at least through November 21, 2026. Re-verify after.
+    "gpt-5.6-sol": Rate(4.0, 20.0),
+    "gpt-5.6-terra": Rate(2.0, 12.0),
+    "gpt-5.6-luna": Rate(0.2, 1.2),
 }
 
-# Multipliers on the model's base *input* rate.
-CACHE_READ_MULT = 0.1
+# Codex rows never carry write buckets, so these stay Anthropic's.
 CACHE_WRITE_5M_MULT = 1.25
 CACHE_WRITE_1H_MULT = 2.0
 
@@ -61,7 +73,7 @@ def normalize_model(model: str) -> str:
     return _DATED_RE.sub("", key)
 
 
-def rate_for(model: str) -> tuple[float, float] | None:
+def rate_for(model: str) -> Rate | None:
     return RATES.get(normalize_model(model))
 
 
@@ -84,13 +96,12 @@ def cost_components(
     rate = rate_for(model)
     if rate is None:
         return None
-    rate_in, rate_out = rate
     return {
-        "input": input_tokens * rate_in / 1_000_000,
-        "output": output_tokens * rate_out / 1_000_000,
-        "cache_read": cache_read_tokens * rate_in * CACHE_READ_MULT / 1_000_000,
-        "cache_write_5m": cache_write_5m_tokens * rate_in * CACHE_WRITE_5M_MULT / 1_000_000,
-        "cache_write_1h": cache_write_1h_tokens * rate_in * CACHE_WRITE_1H_MULT / 1_000_000,
+        "input": input_tokens * rate.input / 1_000_000,
+        "output": output_tokens * rate.output / 1_000_000,
+        "cache_read": cache_read_tokens * rate.input * rate.cache_read_mult / 1_000_000,
+        "cache_write_5m": cache_write_5m_tokens * rate.input * CACHE_WRITE_5M_MULT / 1_000_000,
+        "cache_write_1h": cache_write_1h_tokens * rate.input * CACHE_WRITE_1H_MULT / 1_000_000,
         "web_search": web_search_requests * WEB_SEARCH_USD_PER_1K / 1000,
     }
 
