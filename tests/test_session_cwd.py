@@ -53,7 +53,8 @@ def sync_cwd_exprs() -> list[tuple[str, str]]:
 
 def test_session_start_pulls_rendered_instructions():
     settings = SETTINGS.read_text()
-    assert "/api/config/skills/instructions/claude-code" in settings
+    assert "python -m hydra_cli skills pull --harness claude-code" in settings
+    assert "/api/config/skills/instructions" not in settings
     assert "/api/config/claude-md" not in settings
 
 

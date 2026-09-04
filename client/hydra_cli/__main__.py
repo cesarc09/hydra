@@ -12,10 +12,18 @@ from pathlib import Path
 from hydra_cli import api
 from hydra_cli.apply_settings import cmd_apply_settings
 from hydra_cli.author import author_fields
-from hydra_cli.commands import run_pull
+from hydra_cli.codex import (
+    run_session_start as run_codex_session_start,
+)
+from hydra_cli.codex import (
+    run_setup as run_codex_setup,
+)
+from hydra_cli.commands import run_pull as run_commands_pull
 from hydra_cli.hooks import run_pull as run_hooks_pull
 from hydra_cli.prune import cmd_project_prune
 from hydra_cli.remote import cmd_capture_remote_url, scan_bridge_records
+from hydra_cli.skills import HARNESSES
+from hydra_cli.skills import run_pull as run_skills_pull
 from hydra_cli.sync import (
     MEMORY_INDEX,
     cmd_sync,
@@ -287,7 +295,7 @@ def cmd_config_put_claude_md(args: argparse.Namespace) -> None:
 
 
 def cmd_commands_pull(args: argparse.Namespace) -> None:
-    sys.exit(run_pull())
+    sys.exit(run_commands_pull())
 
 
 def cmd_commands_put(args: argparse.Namespace) -> None:
@@ -325,6 +333,18 @@ def cmd_commands_delete(args: argparse.Namespace) -> None:
 
 def cmd_hooks_pull(args: argparse.Namespace) -> None:
     sys.exit(run_hooks_pull())
+
+
+def cmd_skills_pull(args: argparse.Namespace) -> None:
+    sys.exit(run_skills_pull(args.harness, adopt=args.adopt))
+
+
+def cmd_codex_session_start(args: argparse.Namespace) -> None:
+    sys.exit(run_codex_session_start())
+
+
+def cmd_codex_setup(args: argparse.Namespace) -> None:
+    sys.exit(run_codex_setup())
 
 
 def cmd_hooks_put(args: argparse.Namespace) -> None:
@@ -773,6 +793,13 @@ def build_parser() -> argparse.ArgumentParser:
     hdel = hks_sub.add_parser("delete")
     hdel.add_argument("name")
 
+    # --- skills (server-distributed instructions and behavioural skills) ---
+    sks = sub.add_parser("skills", help="server-distributed skills")
+    sks_sub = sks.add_subparsers(dest="command")
+    spull = sks_sub.add_parser("pull", help="write rendered skills for one harness")
+    spull.add_argument("--harness", required=True, choices=HARNESSES)
+    spull.add_argument("--adopt", action="store_true")
+
     usage = sub.add_parser("usage", help="token accounting")
     usage_sub = usage.add_subparsers(dest="command")
 
@@ -798,6 +825,9 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--pull", action="store_true", help="compatibility no-op")
     sync.add_argument("--cwd", help="override cwd (hooks pass $PWD)")
     sync.add_argument("--dry-run", action="store_true")
+
+    sub.add_parser("codex-session-start", help="Codex SessionStart hook entry")
+    sub.add_parser("codex-setup", help="wire the Codex SessionStart hook")
 
     # --- doctor (instance health + stats + anomaly checks) ---
     sub.add_parser("doctor", help="diagnose this Hydra instance (health, stats, anomalies)")
@@ -852,10 +882,13 @@ DISPATCH = {
     ("hooks", "get"): cmd_hooks_get,
     ("hooks", "list"): cmd_hooks_list,
     ("hooks", "delete"): cmd_hooks_delete,
+    ("skills", "pull"): cmd_skills_pull,
     ("usage", "report"): cmd_usage_report,
     ("usage", "backfill"): cmd_usage_backfill,
     ("usage", "summary"): cmd_usage_summary,
     ("sync", None): cmd_sync,
+    ("codex-session-start", None): cmd_codex_session_start,
+    ("codex-setup", None): cmd_codex_setup,
     ("doctor", None): cmd_doctor,
     ("capture-remote-url", None): cmd_capture_remote_url,
     ("apply-settings", None): cmd_apply_settings,
@@ -876,7 +909,14 @@ def main() -> None:
     # `sync`, `capture-remote-url`, and `apply-settings` are leaf commands;
     # others need a subcommand.
     command = getattr(args, "command", None)
-    leaf_groups = {"sync", "doctor", "capture-remote-url", "apply-settings"}
+    leaf_groups = {
+        "sync",
+        "doctor",
+        "capture-remote-url",
+        "apply-settings",
+        "codex-session-start",
+        "codex-setup",
+    }
     if args.group not in leaf_groups and not command:
         parser.print_help()
         sys.exit(1)

@@ -21,7 +21,7 @@
           },
           {
             "type": "command",
-            "command": "curl -sf -H \"Authorization: Bearer $HYDRA_AUTH_TOKEN\" \"${HYDRA_URL:-http://localhost:8400}/api/config/skills/instructions/claude-code\" -o /tmp/hydra-claude-md.tmp && mv /tmp/hydra-claude-md.tmp ~/.claude/CLAUDE.md || true",
+            "command": "python -m hydra_cli skills pull --harness claude-code >/dev/null 2>&1 || true",
             "timeout": 5
           },
           {

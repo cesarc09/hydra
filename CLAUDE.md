@@ -70,8 +70,9 @@ server/
     slug.py            - Slug normalization + stoplist for auto-registered projects
 client/
   hydra_cli/
-    __main__.py            - CLI dispatch (memory, project, config, commands, hooks, sync,
-                              usage, doctor, capture-remote-url, apply-settings)
+    __main__.py            - CLI dispatch (memory, project, config, commands, hooks, skills,
+                              sync, usage, doctor, Codex hooks, capture-remote-url,
+                              apply-settings)
     api.py                 - Stdlib urllib + bearer token + custom headers
     author.py              - Last-writer authorship for `memory create|update`: harness + session
                               from the env, model from the newest transcript record or --model
@@ -83,6 +84,9 @@ client/
     hooks.py               - `hooks pull`: fetch the server hook map, install
                               ~/.claude/hooks/<name>.<ext>, render the wiring layer
                               ~/.claude/settings.hooks.json, state-file-scoped prune
+    skills.py              - `skills pull`: install rendered instructions and skill packages
+                              for Claude Code or Codex, with per-harness managed-file state
+    codex.py               - Codex SessionStart adapter and idempotent hooks.json writer
     paths.py               - path shape + containment + rejection rules; a deliberate
                               duplicate of server/services/slug.py (the client cannot
                               import server.*), kept honest by a shared test corpus
@@ -106,8 +110,9 @@ client/
                               (the server is the single distribution source).
     debug-hydra.md         - /debug-hydra: thin slash - runs `hydra doctor` and has Claude
                               interpret the result (health verdict, anomalies, fixes).
-  setup.sh                 - pip-installs hydra_cli, runs `hooks pull` then apply-settings
-                              to render ~/.claude/settings.json, installs the status line
+  setup.sh                 - Shared CLI install gate; dispatches both harness setup scripts
+  setup_claude.sh          - Pulls Claude content, renders settings, installs the status line
+  setup_codex.sh           - Wires the Codex SessionStart hook when Codex is installed
 scripts/
   publish_commands.sh   - Seed a dir of *.md (default client/commands/) into the server's
                           command store; the source dir is an argument
@@ -137,6 +142,7 @@ tests/
                         filenames, empty-server safety
   test_commands.py    - /api/config/commands endpoints (CRUD, name validation, auth)
   test_commands_pull.py - `commands pull` write + state-file-scoped prune
+  test_skills_pull.py - Harness-specific skill writes, ownership safety, filters, and prune
   test_config_hooks.py - /api/config/hooks endpoints (CRUD, name + metadata validation,
                         name ordering, auth). Named to avoid test_hooks.py (ingestion)
   test_skills_render.py - Skills marker grammar, one-pass render, and validation
@@ -156,6 +162,7 @@ tests/
   test_session_archive.py - Archive endpoints + auto-unarchive on new activity
   test_session_cwd.py - Hook + CLI cwd pinning: CLAUDE_PROJECT_DIR beats a drifted
                         $PWD, fallback retained (parses the shipped hook commands)
+  test_codex_session_start.py - Codex hook JSON/context output and hooks.json setup
   test_statusline.py  - Status-line render: bar, 250k SPLIT gate, cache countdown
   test_startup.py     - Fail-closed startup guard
   test_usage.py       - /api/usage ingest idempotence (replay, cross-session id, no FK)
@@ -181,7 +188,8 @@ schema.sql            - DDL; sessions.archived_at, memories project_slug FK + UN
 - **Memory authorship:** `author_harness`, `author_session_id` and `author_model` describe the last writer. POST and PUT replace all three; absent means null. The migration backfills only newly-added `author_harness` columns with `claude-code`. The CLI gets harness and session from its environment and model from `--model` or the newest matching transcript record.
 - **Flow marker:** POST/PUT/DELETE `/api/memory` require `X-Hydra-Flow` or return 428. It is a tripwire, not authorisation; the CLI exposes `--flow`, the UI sends constant `dashboard`, and CORS allows the header.
 - **Type<->scope invariant, enforced in BOTH directions** (`_type_for_scope` in `routers/memory.py`, on upsert *and* update). Pinned + a global type -> coerced to `project` (this is what auto-scopes the dashboard's Move-to-project). Global + a project-scoped type -> **422**, because there is no way to guess user vs feedback; the caller has to say. So `hydra memory update <id> --global` requires `--type user|feedback`, and the dashboard's Move-to-Global asks for one.
-- **Skills store:** `skills` holds instructions and behavioural-skill metadata; `skill_variants` holds one common markdown body plus optional harness slot maps. Markers are exactly `{{name}}` for lowercase identifier names, rendered in one pass. Validation covers only variants present, and a missing harness variant leaves common byte-identical. Full publishes run under one shared lock. `/api/config/claude-md` round-trips raw `instructions/common`, while SessionStart curls the rendered `claude-code` instructions. Migration copies a legacy blob only when no instructions row exists, then always drops `claude_md`.
+- **Skills store:** `skills` holds instructions and behavioural-skill metadata; `skill_variants` holds one common markdown body plus optional harness slot maps. Markers are exactly `{{name}}` for lowercase identifier names, rendered in one pass. Validation covers only variants present, and a missing harness variant leaves common byte-identical. Full publishes run under one shared lock. `/api/config/claude-md` round-trips raw `instructions/common`, while SessionStart pulls the rendered harness map. Migration copies a legacy blob only when no instructions row exists, then always drops `claude_md`.
+- **Skills pull:** `skills pull --harness claude-code|codex-cli` fetches the rendered harness map once, applies `enabled` and `instances` locally, and installs instructions plus skills with atomic per-file writes. Per-harness state in `~/.claude/.hydra-skills-<harness>.json` scopes prune to owned skill files; an empty server prunes nothing, instructions are never pruned, unmanaged conflicts require `--adopt`, and symlinks are always refused. Claude gets `disable-model-invocation` frontmatter for explicit-only skills; Codex gets verbatim SKILL.md plus generated `agents/openai.yaml`.
 - **Slash-command distribution:** the server is the single distribution source for slash commands. `config_commands` is a `name -> content` blob table; `GET /api/config/commands` returns the whole `{name: content}` map in one round trip (no manifest - YAGNI), plus per-name GET/PUT/DELETE. Names are validated server-side to `^[A-Za-z0-9][A-Za-z0-9_-]*$` (no path separators / leading dot). The SessionStart `commands pull` hook writes each into `~/.claude/commands/<name>.md` **verbatim** - deliberately NOT via `sync.py`'s `_base_slug`, which would rename `code-review` → `code_review` and break the command - and prunes via a managed-names state file (`~/.claude/.hydra-commands.json`) so it only ever deletes files it wrote, never hand-authored ones. Public commands are authored in `client/commands/` and seeded with `scripts/publish_commands.sh` (run on deploy); private/per-deployment commands are seeded from their own source, so Hydra's repo carries no deployment-specific command content.
 - **Policy-hook distribution (read the exit-2 note before touching `hooks.py`).** `config_hooks` carries a hook's **script body and its settings.json wiring in one row**, and they must never travel separately. `python <missing>.py` exits **2**, and exit 2 on `PreToolUse` is the *blocking* code - so wiring that reaches a machine ahead of its script converts a fail-open guard into a hard deny of every matching tool call. `run_pull` therefore emits wiring **only for a name whose file is on disk after the write phase**; that check is the whole safety story, not the compile check. Corollaries:
   - **Wiring says `python`, never `python3`, and never an absolute path.** Hook commands run in shell form - `sh -c` on macOS/Linux, **Git Bash on Windows**, PowerShell only if Git Bash is absent - and Windows has no `python3` on PATH (the python.org installer ships `python.exe` and `py.exe`; the `python3.exe` that resolves there is the Microsoft Store alias stub). `python3` wiring therefore installed all four policy hooks on Windows and ran none of them, silently, for weeks. Bare `python` is the same interpreter contract `setup.sh` and `client/settings.json` already depend on, and a bare name keeps the layer stable where an absolute `sys.executable` would rewrite `settings.hooks.json` on every venv switch. `run_pull` warns to stderr when a wired runtime's interpreter is not on PATH, because that failure is otherwise invisible: it exits 127, not the blocking 2. `$HOME` in the script path is fine - sh, Git Bash and PowerShell all expand it.
