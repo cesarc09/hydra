@@ -1,7 +1,7 @@
 import sqlite3
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 
 from server.auth import require_auth
 from server.db import get_db
@@ -13,16 +13,23 @@ router = APIRouter(
 
 
 def _now() -> str:
-    """Timestamp for created_at/updated_at.
+    """Keep microseconds because updated_at is stamped into mirror files.
 
-    Keeps microseconds, unlike the rest of the API. `updated_at` is the version
-    token `hydra sync` uses to decide whether a memory changed on the server
-    since a mirror file was written - so two writes to one row MUST produce two
-    different values. Truncated to whole seconds, a re-scope landing in the same
-    second as the mirror's recorded version is invisible, and the stale mirror
-    silently reverts it on the next push.
+    Two writes to one row must produce two distinct provenance values.
     """
     return datetime.now(UTC).isoformat()
+
+
+async def require_flow(x_hydra_flow: str = Header(default="")) -> None:
+    """Require the memory-write flow tripwire."""
+    if not x_hydra_flow.strip() or len(x_hydra_flow) > 64:
+        raise HTTPException(
+            status_code=428,
+            detail=(
+                "memory writes belong to a human-gated flow;"
+                " rerun with --flow <name>"
+            ),
+        )
 
 
 GLOBAL_TYPES = frozenset({"user", "feedback"})
@@ -93,7 +100,7 @@ async def get_memory(memory_id: int) -> MemoryItem:
     return MemoryItem(**dict(rows[0]))
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(require_flow)])
 async def upsert_memory(memory: MemoryCreate) -> MemoryItem:
     """Upsert on name. Names are globally unique: one name = one memory,
     whatever its scope.
@@ -147,7 +154,7 @@ async def upsert_memory(memory: MemoryCreate) -> MemoryItem:
     return MemoryItem(**dict(result[0]))
 
 
-@router.put("/{memory_id}")
+@router.put("/{memory_id}", dependencies=[Depends(require_flow)])
 async def update_memory(memory_id: int, update: MemoryUpdate) -> MemoryItem:
     db = await get_db()
     rows = list(await db.execute_fetchall(
@@ -198,7 +205,9 @@ async def update_memory(memory_id: int, update: MemoryUpdate) -> MemoryItem:
     return MemoryItem(**dict(updated[0]))
 
 
-@router.delete("/{memory_id}", status_code=204)
+@router.delete(
+    "/{memory_id}", status_code=204, dependencies=[Depends(require_flow)]
+)
 async def delete_memory(memory_id: int):
     db = await get_db()
     cursor = await db.execute("DELETE FROM memories WHERE id = ?", (memory_id,))

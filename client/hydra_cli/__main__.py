@@ -137,7 +137,8 @@ def cmd_memory_create(args: argparse.Namespace) -> None:
         codex_root=Path("~/.codex/sessions").expanduser(),
         model=args.model,
     ))
-    status, body = api.post("/api/memory", payload)
+    headers = {"X-Hydra-Flow": args.flow} if args.flow else None
+    status, body = api.post("/api/memory", payload, headers=headers)
     if status != 200:
         _die(status, body)
     _print_json(json.loads(body))
@@ -180,14 +181,18 @@ def cmd_memory_update(args: argparse.Namespace) -> None:
         codex_root=Path("~/.codex/sessions").expanduser(),
         model=args.model,
     ))
-    status, body = api.put_json(f"/api/memory/{args.id}", payload)
+    headers = {"X-Hydra-Flow": args.flow} if args.flow else None
+    status, body = api.put_json(
+        f"/api/memory/{args.id}", payload, headers=headers
+    )
     if status != 200:
         _die(status, body)
     _print_json(json.loads(body))
 
 
 def cmd_memory_delete(args: argparse.Namespace) -> None:
-    status, body = api.delete(f"/api/memory/{args.id}")
+    headers = {"X-Hydra-Flow": args.flow} if args.flow else None
+    status, body = api.delete(f"/api/memory/{args.id}", headers=headers)
     if status != 204:
         _die(status, body)
 
@@ -644,6 +649,10 @@ def build_parser() -> argparse.ArgumentParser:
     mc.add_argument("--body-file")
     mc.add_argument("--project", help="project slug to pin this memory to (omit for global)")
     mc.add_argument("--model", help="author model override")
+    mc.add_argument(
+        "--flow",
+        help="name of the human-gated flow this write belongs to (server requires it)",
+    )
 
     mu = mem_sub.add_parser("update")
     mu.add_argument("id", type=int)
@@ -652,6 +661,10 @@ def build_parser() -> argparse.ArgumentParser:
     mu.add_argument("--desc")
     mu.add_argument("--body-file")
     mu.add_argument("--model", help="author model override")
+    mu.add_argument(
+        "--flow",
+        help="name of the human-gated flow this write belongs to (server requires it)",
+    )
     scope = mu.add_mutually_exclusive_group()
     scope.add_argument("--project", help="re-scope: pin this memory to a project slug")
     scope.add_argument(
@@ -661,6 +674,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     md = mem_sub.add_parser("delete")
     md.add_argument("id", type=int)
+    md.add_argument(
+        "--flow",
+        help="name of the human-gated flow this write belongs to (server requires it)",
+    )
 
     # --- project ---
     proj = sub.add_parser("project")

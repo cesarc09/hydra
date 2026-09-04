@@ -6,6 +6,7 @@ import json
 import os
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 
 DEFAULT_URL = "http://localhost:8400"
 
@@ -29,6 +30,7 @@ def _request(
     *,
     body: bytes | None = None,
     content_type: str = "application/json",
+    headers: Mapping[str, str] | None = None,
 ) -> tuple[int, str]:
     """Make an HTTP request to the Hydra API. Returns (status_code, response_body)."""
     url = f"{_base_url()}{path}"
@@ -41,6 +43,8 @@ def _request(
     instance_id = os.environ.get("HYDRA_INSTANCE_ID", "").strip()
     if instance_id:
         req.add_header("X-Instance-Id", instance_id)
+    for name, value in (headers or {}).items():
+        req.add_header(name, value)
     try:
         with urllib.request.urlopen(req) as resp:
             return resp.status, resp.read().decode("utf-8")
@@ -52,19 +56,32 @@ def get(path: str) -> tuple[int, str]:
     return _request("GET", path)
 
 
-def post(path: str, payload: dict) -> tuple[int, str]:
-    return _request("POST", path, body=json.dumps(payload).encode("utf-8"))
-
-
-def put_json(path: str, payload: dict) -> tuple[int, str]:
-    return _request("PUT", path, body=json.dumps(payload).encode("utf-8"))
-
-
-def put_text(path: str, text: str) -> tuple[int, str]:
+def post(
+    path: str, payload: dict, *, headers: Mapping[str, str] | None = None
+) -> tuple[int, str]:
     return _request(
-        "PUT", path, body=text.encode("utf-8"), content_type="text/plain"
+        "POST", path, body=json.dumps(payload).encode("utf-8"), headers=headers
     )
 
 
-def delete(path: str) -> tuple[int, str]:
-    return _request("DELETE", path)
+def put_json(
+    path: str, payload: dict, *, headers: Mapping[str, str] | None = None
+) -> tuple[int, str]:
+    return _request(
+        "PUT", path, body=json.dumps(payload).encode("utf-8"), headers=headers
+    )
+
+
+def put_text(
+    path: str, text: str, *, headers: Mapping[str, str] | None = None
+) -> tuple[int, str]:
+    return _request(
+        "PUT", path, body=text.encode("utf-8"), content_type="text/plain",
+        headers=headers,
+    )
+
+
+def delete(
+    path: str, *, headers: Mapping[str, str] | None = None
+) -> tuple[int, str]:
+    return _request("DELETE", path, headers=headers)

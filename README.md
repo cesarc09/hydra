@@ -105,7 +105,11 @@ python -m hydra_cli sync [--pull] [--dry-run] [--cwd PATH]
 python -m hydra_cli memory list [--all|--project SLUG|--global] [--json]
                       # Defaults to this project + globals, one index line each.
                       # --json returns full rows with bodies.
-python -m hydra_cli memory get ID | create ... | update ID ... | delete ID
+python -m hydra_cli memory get ID
+python -m hydra_cli memory create ... --flow <name>
+python -m hydra_cli memory update ID ... --flow <name>
+python -m hydra_cli memory delete ID --flow <name>
+                      # Memory writes require a human-gated flow name.
 python -m hydra_cli project list | get SLUG | create --slug --path | update SLUG | delete
 python -m hydra_cli project prune [--apply]
                       # Propose registry cleanup: deletes only projects whose

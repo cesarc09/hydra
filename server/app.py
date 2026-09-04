@@ -120,7 +120,7 @@ if config.PUBLIC_ORIGIN:
         allow_origins=[f"https://{config.PUBLIC_ORIGIN}"],
         allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "DELETE"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", "X-Hydra-Flow"],
     )
 
 

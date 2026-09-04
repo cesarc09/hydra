@@ -53,8 +53,8 @@ server/
                         POST /sessions/{id}/archive|unarchive + /sessions/archive-ended
     config.py         - GET/PUT /api/config/claude-md (empty-body guard); CRUD
                         /api/config/commands (name-validated slash-command blobs)
-    memory.py         - CRUD /api/memory; upsert on name (globally unique; 409 on a
-                        cross-scope name without rescope) + filtered GET
+    memory.py         - CRUD /api/memory; write-flow tripwire; upsert on name
+                        (globally unique; 409 on cross-scope name without rescope)
     projects.py       - CRUD /api/projects + auto-register + confirm endpoints
     usage.py          - POST /api/usage/messages (INSERT OR IGNORE on message_id),
                         GET /api/usage/summary?group_by=day|model|project|instance|agent
@@ -68,7 +68,7 @@ client/
   hydra_cli/
     __main__.py            - CLI dispatch (memory, project, config, commands, hooks, sync,
                               usage, doctor, capture-remote-url, apply-settings)
-    api.py                 - Stdlib urllib + bearer token + User-Agent header
+    api.py                 - Stdlib urllib + bearer token + custom headers
     author.py              - Last-writer authorship for `memory create|update`: harness + session
                               from the env, model from the newest transcript record or --model
     sync.py                - Memory sync, keyed on the server row id (stamped into each
@@ -172,6 +172,7 @@ schema.sql            - DDL; sessions.archived_at, memories project_slug FK + UN
   - **An empty server is never authority to delete.** A wrong `HYDRA_URL`, a fresh DB and a half-restored backup all look exactly like "everything was deleted", and the mirror may be the only copy left. `run_sync` checks the whole corpus (`fetch_whole_corpus()`, fetched once and lazily), not the project's slice, so a project with no memories of its own still prunes correctly. Prune also keeps unparseable files and id-less files whose names are absent from the server. With an authoritative server, these strays stay on disk but are omitted from `MEMORY.md`; without authority, the index is rebuilt from disk.
 - **Memory scope:** type=user/feedback -> global (project_slug=NULL); type=project/reference -> pinned to a registered project. The dashboard and `hydra memory ...` are the edit paths; sync only mirrors server state.
 - **Memory authorship:** `author_harness`, `author_session_id` and `author_model` describe the last writer. POST and PUT replace all three; absent means null. The migration backfills only newly-added `author_harness` columns with `claude-code`. The CLI gets harness and session from its environment and model from `--model` or the newest matching transcript record.
+- **Flow marker:** POST/PUT/DELETE `/api/memory` require `X-Hydra-Flow` or return 428. It is a tripwire, not authorisation; the CLI exposes `--flow`, the UI sends constant `dashboard`, and CORS allows the header.
 - **Type<->scope invariant, enforced in BOTH directions** (`_type_for_scope` in `routers/memory.py`, on upsert *and* update). Pinned + a global type -> coerced to `project` (this is what auto-scopes the dashboard's Move-to-project). Global + a project-scoped type -> **422**, because there is no way to guess user vs feedback; the caller has to say. So `hydra memory update <id> --global` requires `--type user|feedback`, and the dashboard's Move-to-Global asks for one.
 - **CLAUDE.md scope:** single-row, global-only (no project_slug column). Editable via the `/memory` dashboard or `python -m hydra_cli config put-claude-md <file>`. SessionStart hook curls the blob to `~/.claude/CLAUDE.md` (user-level), so a save propagates to every machine on next start. PUT rejects empty/whitespace-only bodies to prevent accidental wipe.
 - **Slash-command distribution:** the server is the single distribution source for slash commands. `config_commands` is a `name -> content` blob table; `GET /api/config/commands` returns the whole `{name: content}` map in one round trip (no manifest - YAGNI), plus per-name GET/PUT/DELETE. Names are validated server-side to `^[A-Za-z0-9][A-Za-z0-9_-]*$` (no path separators / leading dot). The SessionStart `commands pull` hook writes each into `~/.claude/commands/<name>.md` **verbatim** - deliberately NOT via `sync.py`'s `_base_slug`, which would rename `code-review` → `code_review` and break the command - and prunes via a managed-names state file (`~/.claude/.hydra-commands.json`) so it only ever deletes files it wrote, never hand-authored ones. Public commands are authored in `client/commands/` and seeded with `scripts/publish_commands.sh` (run on deploy); private/per-deployment commands are seeded from their own source, so Hydra's repo carries no deployment-specific command content.

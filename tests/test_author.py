@@ -117,7 +117,7 @@ def test_memory_create_sends_author_fields(
 ):
     seen: dict[str, object] = {}
 
-    def post(path: str, payload: dict[str, object]) -> tuple[int, str]:
+    def post(path: str, payload: dict[str, object], **kw) -> tuple[int, str]:
         seen["path"] = path
         seen["payload"] = payload
         return 200, json.dumps(payload)
@@ -142,3 +142,30 @@ def test_memory_create_sends_author_fields(
         "author_session_id": "cli-session",
         "author_model": "x",
     }
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected_headers"),
+    [
+        (["memory", "delete", "7", "--flow", "sync"], {"X-Hydra-Flow": "sync"}),
+        (["memory", "delete", "7"], None),
+    ],
+)
+def test_memory_delete_flow_header(
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str],
+    expected_headers: dict[str, str] | None,
+):
+    seen: dict[str, object] = {}
+
+    def delete(path: str, *, headers=None) -> tuple[int, str]:
+        seen["path"] = path
+        seen["headers"] = headers
+        return 204, ""
+
+    monkeypatch.setattr(main_mod.api, "delete", delete)
+    args = main_mod.build_parser().parse_args(argv)
+
+    main_mod.cmd_memory_delete(args)
+
+    assert seen == {"path": "/api/memory/7", "headers": expected_headers}

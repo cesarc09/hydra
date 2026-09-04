@@ -19,6 +19,86 @@ async def _create_memory(client: AsyncClient, **overrides) -> dict:
     return res.json()
 
 
+# --- Flow marker ---
+
+
+@pytest.mark.parametrize("flow", [None, "   ", "x" * 65])
+async def test_create_requires_valid_flow_marker(
+    bare_client: AsyncClient, flow: str | None
+):
+    headers = {"X-Hydra-Flow": flow} if flow is not None else {}
+    res = await bare_client.post(
+        "/api/memory", json={"name": "flow test", "type": "user"},
+        headers=headers,
+    )
+    assert res.status_code == 428
+
+
+async def test_create_accepts_valid_flow_marker(bare_client: AsyncClient):
+    res = await bare_client.post(
+        "/api/memory", json={"name": "flow test", "type": "user"},
+        headers={"X-Hydra-Flow": "sync"},
+    )
+    assert res.status_code == 200
+
+
+@pytest.mark.parametrize("flow", [None, "   ", "x" * 65])
+async def test_update_requires_valid_flow_marker(
+    client: AsyncClient, bare_client: AsyncClient, flow: str | None
+):
+    created = await _create_memory(client, name=f"update {flow!r}")
+    headers = {"X-Hydra-Flow": flow} if flow is not None else {}
+    res = await bare_client.put(
+        f"/api/memory/{created['id']}", json={"body": "changed"},
+        headers=headers,
+    )
+    assert res.status_code == 428
+
+
+async def test_update_accepts_valid_flow_marker(
+    client: AsyncClient, bare_client: AsyncClient
+):
+    created = await _create_memory(client, name="valid update")
+    res = await bare_client.put(
+        f"/api/memory/{created['id']}", json={"body": "changed"},
+        headers={"X-Hydra-Flow": "sync"},
+    )
+    assert res.status_code == 200
+
+
+@pytest.mark.parametrize("flow", [None, "   ", "x" * 65])
+async def test_delete_requires_valid_flow_marker(
+    client: AsyncClient, bare_client: AsyncClient, flow: str | None
+):
+    created = await _create_memory(client, name=f"delete {flow!r}")
+    headers = {"X-Hydra-Flow": flow} if flow is not None else {}
+    res = await bare_client.delete(
+        f"/api/memory/{created['id']}", headers=headers
+    )
+    assert res.status_code == 428
+
+
+async def test_delete_accepts_valid_flow_marker(
+    client: AsyncClient, bare_client: AsyncClient
+):
+    created = await _create_memory(client, name="valid delete")
+    res = await bare_client.delete(
+        f"/api/memory/{created['id']}",
+        headers={"X-Hydra-Flow": "sync"},
+    )
+    assert res.status_code == 204
+
+
+async def test_memory_reads_do_not_require_flow_marker(
+    client: AsyncClient, bare_client: AsyncClient
+):
+    created = await _create_memory(client, name="header-free reads")
+    assert (await bare_client.get("/api/memory")).status_code == 200
+    assert (
+        await bare_client.get(f"/api/memory/{created['id']}")
+    ).status_code == 200
+
+
 # --- List / Get ---
 
 
@@ -454,6 +534,16 @@ async def test_list_filtered_by_project_with_globals(client: AsyncClient):
 async def test_memory_auth_required(client: AsyncClient, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("server.config.AUTH_TOKEN", "secret")
     res = await client.get("/api/memory")
+    assert res.status_code == 401
+
+
+async def test_memory_write_auth_runs_before_flow(
+    bare_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr("server.config.AUTH_TOKEN", "secret")
+    res = await bare_client.post(
+        "/api/memory", json={"name": "unauthorized", "type": "user"}
+    )
     assert res.status_code == 401
 
 
