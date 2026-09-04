@@ -21,7 +21,7 @@
           },
           {
             "type": "command",
-            "command": "curl -sf -H \"Authorization: Bearer $HYDRA_AUTH_TOKEN\" \"${HYDRA_URL:-http://localhost:8400}/api/config/claude-md\" -o /tmp/hydra-claude-md.tmp && mv /tmp/hydra-claude-md.tmp ~/.claude/CLAUDE.md || true",
+            "command": "python -m hydra_cli skills pull --harness claude-code >/dev/null 2>&1 || true",
             "timeout": 5
           },
           {
@@ -91,14 +91,21 @@
         ]
       }
     ],
-    "Stop": [
+    "PreToolUse": [
       {
+        "matcher": "Write|Edit|NotebookEdit|Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "python -m hydra_cli sync --push --cwd \"${CLAUDE_PROJECT_DIR:-$PWD}\" >/dev/null 2>&1 || true",
-            "timeout": 5
-          },
+            "command": "python -m hydra_cli guard",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
           {
             "type": "command",
             "command": "python -m hydra_cli capture-remote-url; [ $? = 1 ] && exit 1; exit 0",

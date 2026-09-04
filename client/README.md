@@ -35,6 +35,23 @@ export HYDRA_AUTH_TOKEN="your-token"        # must match Hydra server
 bash client/setup.sh
 ```
 
+## Codex CLI
+
+`setup.sh` runs `setup_codex.sh` after the Claude Code deploy. It returns silently when `codex` is not on `PATH`; otherwise it runs `python -m hydra_cli codex-setup`, which wires two hooks idempotently into `$CODEX_HOME/hooks.json` (default `~/.codex/hooks.json`), rewriting a stale `python -m hydra_cli ...` entry in place instead of appending a second one:
+
+| Event | Matcher | Command | Timeout |
+|-------|---------|---------|---------|
+| `SessionStart` | `startup\|resume\|clear\|compact` | `python -m hydra_cli codex-session-start` | 20 |
+| `PreToolUse` | `Bash\|apply_patch` | `python -m hydra_cli guard` | 10 |
+
+Codex skips a new or changed hook until it is trusted: open Codex once after setup and run `/hooks`. That is needed again whenever a wired command string changes.
+
+The SessionStart hook pulls the memory mirror and the `codex-cli` skills, then emits `additionalContext`: one header line naming the absolute memory dir, followed by that dir's `MEMORY.md` - or the header alone when the two together exceed 8000 bytes. Diagnostics go to stderr, so stdout carries only the hook JSON.
+
+Files land in `$CODEX_HOME/AGENTS.md` (instructions), `~/.agents/skills/<name>/SKILL.md` and `~/.agents/skills/<name>/agents/openai.yaml` (skills), and `~/.claude/.hydra-skills-codex-cli.json` (the state file that scopes prune to files Hydra wrote). `CODEX_HOME` is honoured wherever a Codex path is built. The memory mirror stays under `~/.claude/projects/`, shared with Claude Code.
+
+Both hooks call `python -m hydra_cli`, so the same interpreter rule applies as for the Claude Code hooks - see the client setup note in the root [README](../README.md).
+
 ## How `~/.claude/settings.json` is composed
 
 `setup.sh` runs `python -m hydra_cli apply-settings`, which merges four

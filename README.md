@@ -1,45 +1,71 @@
-# Hydra - Claude Code Control Plane
+# Hydra - Coding Agent Control Plane
 
-One server that holds your memories and CLAUDE.md, and watches every session - across every machine you use Claude Code on.
+One server that holds your memories, instructions and skills, and watches every session - across every machine and every coding agent you use.
 
 ## Why
 
-Two things about Claude Code hurt once you use it on more than one machine.
+Two things about a coding agent hurt once you use it on more than one machine.
 
 **Every session starts stateless.** Context you've established - preferences, project conventions, decisions already made - doesn't carry forward to the next session, let alone the next machine. You re-brief, over and over, and that friction is what keeps agents out of workflows where they'd otherwise fit.
 
 **Every session runs in isolation.** You can't tell at a glance which session on which machine is waiting for input, what just got edited, or whether something is stuck.
 
-Hydra is one server that solves both. A memory store and CLAUDE.md that travel with you across machines - pulled when a session starts, pushed when it ends - a live dashboard that watches every session in real time, and token accounting across machines. Same server, same bearer token; the loops are independent, so observation keeps working if sync fails, and vice versa.
+Hydra is one server that solves both. A server-owned memory store, instructions document and skill set that are pulled to every machine - and every harness - when a session starts, a live dashboard that watches every session in real time, and token accounting across machines. Same server, same bearer token; the loops are independent, so observation keeps working if sync fails, and vice versa.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                    Hydra Server (24/7)                        │
 │                                                               │
-│     Memory store  ·  CLAUDE.md  ·  Project registry           │
+│     Memory store  ·  Instructions  ·  Skills  ·  Projects     │
 │                            │                                  │
 │                  Live dashboard (SSE)                         │
 └──────────────┬──────────────────────────────┬────────────────┘
                │ SessionStart: pull           │ Stop/SessionEnd: push
-               │ (memories, CLAUDE.md)        │ (new memories, events)
+               │ (memories, instructions)     │ (new memories, events)
                │                              │
        ┌───────┴──────┬───────────┬──────────┴────┐
        │              │           │               │
      Mac            WSL        SSH-1           SSH-2
-  Claude Code    Claude Code  Claude Code    Claude Code
+  Claude Code    Claude Code   Codex CLI      Codex CLI
 ```
 
 ## How It Works
 
 Two loops run continuously:
 
-**Context loop** - `python -m hydra_cli sync` reconciles each machine's local memory dir (`~/.claude/projects/<dir>/memory/`) with the server. A SessionStart hook runs `python -m hydra_cli sync --pull` before Claude sees the session; a Stop hook runs `python -m hydra_cli sync --push` at turn end. Memories are typed: `user`/`feedback` are global (available everywhere), `project`/`reference` are pinned to the project the cwd maps to. Unregistered cwds auto-register via the server (with a stoplist for `~`, `~/Downloads`, `/tmp`, etc.) and surface in the dashboard's **Pending review** section for confirmation or deletion. The same SessionStart pass pulls server-distributed slash commands into `~/.claude/commands/` and policy hooks into `~/.claude/hooks/`, so a command or hook published once reaches every machine.
+**Context loop** - `python -m hydra_cli sync` pulls each project's server memories into its local mirror (`~/.claude/projects/<dir>/memory/`). A SessionStart hook runs `python -m hydra_cli sync --pull` before Claude sees the session. The server is the only edit source; use the dashboard or `hydra memory ...`, never local mirror edits. Memories are typed: `user`/`feedback` are global (available everywhere), `project`/`reference` are pinned to the project the cwd maps to. Unregistered cwds auto-register via the server (with a stoplist for `~`, `~/Downloads`, `/tmp`, etc.) and surface in the dashboard's **Pending review** section for confirmation or deletion. The same SessionStart pass pulls server-distributed slash commands into `~/.claude/commands/` and policy hooks into `~/.claude/hooks/`, so a command or hook published once reaches every machine.
 
 **Observation loop** - every Claude Code tool call fires an HTTP hook to `/api/hooks/event`. The server tracks session state transitions (active / idle / waiting_input / ended) and broadcasts them over Server-Sent Events to any open dashboard.
 
 **Accounting loop** - a Stop hook runs `python -m hydra_cli usage report`, which parses the session's transcript and its subagents' and posts per-message token counts to `/api/usage/messages`. Rows are keyed on the API message id, so retries and `python -m hydra_cli usage backfill` are idempotent; `/usage` prices them server-side.
 
 Same bearer token, same server, but the two loops don't depend on each other.
+
+## Multi-harness
+
+One server, two harnesses. Hydra serves Claude Code and OpenAI Codex CLI from the same store, over the same bearer token and the same hook wire shape. Both pull the same memories, the same instructions document and the same skills when a session starts, and both record who wrote a memory.
+
+Shared across both:
+
+- **Memories** - one mirror, `~/.claude/projects/<dir>/memory/`, pulled by `python -m hydra_cli sync`. Codex reaches it through its own SessionStart hook.
+- **The instructions document** - one server-side body, rendered per harness and written to `~/.claude/CLAUDE.md` for Claude Code and `~/.codex/AGENTS.md` for Codex CLI.
+- **Skills** - rendered per harness into `~/.claude/skills/<name>/SKILL.md`, or `~/.agents/skills/<name>/SKILL.md` plus a generated `agents/openai.yaml` for Codex.
+- **The memory guard** - `python -m hydra_cli guard`, wired at `PreToolUse` on both.
+- **Authorship** - every memory write records the harness, session id and model of its last writer.
+
+The per-harness text is one common markdown body carrying `{{slot}}` markers plus a slot map per harness. The server substitutes in a single pass at render time, and a publish is refused when a harness variant leaves a marker unfilled; a harness with no variant of its own gets the common body byte-identical. No harness convention lives on the server - `implicit_invocation` travels as data and the client applies it.
+
+### Codex CLI
+
+`bash client/setup.sh` sets up both harnesses: `setup_claude.sh` first, then `setup_codex.sh`, which exits silently when `codex` is not on `PATH`. It wires two hooks into `~/.codex/hooks.json`: `SessionStart` runs `python -m hydra_cli codex-session-start`, `PreToolUse` runs `python -m hydra_cli guard`. Codex does not run a new or changed hook until you trust it once - open Codex after setup and run `/hooks`.
+
+### Memory writes
+
+The local mirror is pull-only. Writes go through `hydra memory create|update|delete ... --flow <name>`, where the name is the human-gated flow that approved them; the server answers 428 without the flow marker, and the guard denies both a direct edit under the mirror and any `memory create|update|delete` command with no `--flow` in it. Set `HYDRA_FLOW_HINT` where the hooks run to name your deployment's flow in the denial text.
+
+### Skills
+
+Public skill sources live in `client/skills/<name>/`: `common.md` holds the frontmatter (`name`, `description`) and the body; an optional `<harness>.json` supplies that harness's slot values; an optional `skill.json` carries metadata (`enabled`, `implicit_invocation`, `instances`). A directory named `instructions` publishes the instructions document rather than a skill. `scripts/publish_skills.sh [SOURCE_DIR]` seeds the store, defaulting to `client/skills/`. `debug-hydra` is the shipped public skill.
 
 ## Setup
 
@@ -60,14 +86,14 @@ uvicorn server.app:app --host "$HYDRA_BIND_HOST" --port 8400
 
 The server fails closed if `HYDRA_AUTH_TOKEN` is unset. For local dev without a token, set `HYDRA_ALLOW_NO_AUTH=1`. For production, run under a service manager (systemd, launchd, Docker) and put the server behind whatever reverse-proxy or TLS termination you prefer - Hydra doesn't care.
 
-### Client (each machine that runs Claude Code)
+### Client (each machine that runs a coding agent)
 
 ```bash
 git clone https://github.com/cesarc09/hydra.git ~/projects/hydra
 export HYDRA_URL=https://your-hydra-server       # or http://localhost:8400
 export HYDRA_AUTH_TOKEN=...                      # must match the server
 export HYDRA_INSTANCE_ID="$(hostname)"
-bash ~/projects/hydra/client/setup.sh
+bash ~/projects/hydra/client/setup.sh    # Claude Code, plus Codex CLI if `codex` is on PATH
 ```
 
 `setup.sh` installs `~/.claude/settings.json` with hooks pointing at `$HYDRA_URL` and installs the `hydra` CLI (`pip install -e`). It also scaffolds `~/.claude/settings.user.json` on first run - your personal layer for prefs like `effortLevel`, `attribution`, and `statusLine`. Edit a value to override, or delete a field to fall back to the template default. See [client/README.md](client/README.md) for the full layering model. Put the exports in your shell profile so hooks see them in every session.
@@ -99,14 +125,17 @@ Regardless of network path, keep `HYDRA_BIND_HOST=127.0.0.1` and terminate TLS *
 Invoke as `python -m hydra_cli ...`. A `hydra` console shim is also installed by setup.sh; use it interchangeably when it's on `PATH`. The `python -m` form is the canonical one because it doesn't depend on a venv-bound entry point - the same reason hooks use it.
 
 ```
-python -m hydra_cli sync [--pull|--push|--dry-run] [--cwd PATH]
-                      # Reconcile local memory dir with server. Bidirectional
-                      # by default; flags restrict direction. Conflicts are
-                      # flagged, not merged.
+python -m hydra_cli sync [--pull] [--dry-run] [--cwd PATH]
+                      # Pull server memories into the local mirror. --pull is
+                      # accepted for compatibility and has no effect.
 python -m hydra_cli memory list [--all|--project SLUG|--global] [--json]
                       # Defaults to this project + globals, one index line each.
                       # --json returns full rows with bodies.
-python -m hydra_cli memory get ID | create ... | update ID ... | delete ID
+python -m hydra_cli memory get ID
+python -m hydra_cli memory create ... --flow <name>
+python -m hydra_cli memory update ID ... --flow <name>
+python -m hydra_cli memory delete ID --flow <name>
+                      # Memory writes require a human-gated flow name.
 python -m hydra_cli project list | get SLUG | create --slug --path | update SLUG | delete
 python -m hydra_cli project prune [--apply]
                       # Propose registry cleanup: deletes only projects whose
@@ -118,6 +147,13 @@ python -m hydra_cli config get-claude-md | put-claude-md FILE
 python -m hydra_cli commands pull | put NAME FILE | get NAME | list | delete NAME
                       # Slash commands. `pull` is the SessionStart hook; the
                       # rest manage what the server distributes.
+python -m hydra_cli skills pull --harness claude-code|codex-cli [--adopt]
+                      # Install the rendered instructions and skills for one
+                      # harness. --adopt takes ownership of a pre-existing,
+                      # non-identical target.
+python -m hydra_cli codex-setup | codex-session-start | guard
+                      # Codex hook wiring, its SessionStart entry, and the
+                      # PreToolUse memory guard (both harnesses).
 python -m hydra_cli hooks pull | get NAME | list | delete NAME
 python -m hydra_cli hooks put NAME FILE --event EVENT [--matcher M]
                       [--runtime python|bash] [--timeout N] [--instances a,b]

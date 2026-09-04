@@ -11,11 +11,27 @@ from pathlib import Path
 
 from hydra_cli import api
 from hydra_cli.apply_settings import cmd_apply_settings
-from hydra_cli.commands import run_pull
+from hydra_cli.author import author_fields
+from hydra_cli.codex import (
+    run_session_start as run_codex_session_start,
+)
+from hydra_cli.codex import (
+    run_setup as run_codex_setup,
+)
+from hydra_cli.commands import run_pull as run_commands_pull
+from hydra_cli.guard import main as run_guard_main
 from hydra_cli.hooks import run_pull as run_hooks_pull
 from hydra_cli.prune import cmd_project_prune
 from hydra_cli.remote import cmd_capture_remote_url, scan_bridge_records
-from hydra_cli.sync import cmd_sync, fetch_server_memories, resolve_project_slug
+from hydra_cli.skills import HARNESSES
+from hydra_cli.skills import run_pull as run_skills_pull
+from hydra_cli.sync import (
+    MEMORY_INDEX,
+    cmd_sync,
+    fetch_server_memories,
+    parse_memory_file,
+    resolve_project_slug,
+)
 from hydra_cli.usage import cmd_report as _run_usage_report
 from hydra_cli.usage import run_backfill
 
@@ -113,7 +129,7 @@ def cmd_memory_get(args: argparse.Namespace) -> None:
 
 
 def cmd_memory_create(args: argparse.Namespace) -> None:
-    payload: dict[str, str] = {
+    payload: dict[str, object] = {
         "name": args.name,
         "type": args.type,
     }
@@ -124,7 +140,14 @@ def cmd_memory_create(args: argparse.Namespace) -> None:
     body_text = _read_body(args)
     if body_text:
         payload["body"] = body_text
-    status, body = api.post("/api/memory", payload)
+    payload.update(author_fields(
+        os.environ,
+        claude_root=Path("~/.claude/projects").expanduser(),
+        codex_root=Path("~/.codex/sessions").expanduser(),
+        model=args.model,
+    ))
+    headers = {"X-Hydra-Flow": args.flow} if args.flow else None
+    status, body = api.post("/api/memory", payload, headers=headers)
     if status != 200:
         _die(status, body)
     _print_json(json.loads(body))
@@ -161,14 +184,24 @@ def cmd_memory_update(args: argparse.Namespace) -> None:
     if not payload:
         print("Nothing to update", file=sys.stderr)
         sys.exit(1)
-    status, body = api.put_json(f"/api/memory/{args.id}", payload)
+    payload.update(author_fields(
+        os.environ,
+        claude_root=Path("~/.claude/projects").expanduser(),
+        codex_root=Path("~/.codex/sessions").expanduser(),
+        model=args.model,
+    ))
+    headers = {"X-Hydra-Flow": args.flow} if args.flow else None
+    status, body = api.put_json(
+        f"/api/memory/{args.id}", payload, headers=headers
+    )
     if status != 200:
         _die(status, body)
     _print_json(json.loads(body))
 
 
 def cmd_memory_delete(args: argparse.Namespace) -> None:
-    status, body = api.delete(f"/api/memory/{args.id}")
+    headers = {"X-Hydra-Flow": args.flow} if args.flow else None
+    status, body = api.delete(f"/api/memory/{args.id}", headers=headers)
     if status != 204:
         _die(status, body)
 
@@ -263,7 +296,7 @@ def cmd_config_put_claude_md(args: argparse.Namespace) -> None:
 
 
 def cmd_commands_pull(args: argparse.Namespace) -> None:
-    sys.exit(run_pull())
+    sys.exit(run_commands_pull())
 
 
 def cmd_commands_put(args: argparse.Namespace) -> None:
@@ -301,6 +334,22 @@ def cmd_commands_delete(args: argparse.Namespace) -> None:
 
 def cmd_hooks_pull(args: argparse.Namespace) -> None:
     sys.exit(run_hooks_pull())
+
+
+def cmd_skills_pull(args: argparse.Namespace) -> None:
+    sys.exit(run_skills_pull(args.harness, adopt=args.adopt))
+
+
+def cmd_codex_session_start(args: argparse.Namespace) -> None:
+    sys.exit(run_codex_session_start())
+
+
+def cmd_codex_setup(args: argparse.Namespace) -> None:
+    sys.exit(run_codex_setup())
+
+
+def cmd_guard(args: argparse.Namespace) -> None:
+    run_guard_main()
 
 
 def cmd_hooks_put(args: argparse.Namespace) -> None:
@@ -357,6 +406,23 @@ def _fmt_offenders(items: list[str], cap: int = 5) -> str:
     shown = ", ".join(items[:cap])
     extra = len(items) - cap
     return shown + (f" (+{extra} more)" if extra > 0 else "")
+
+
+def _stray_memory_files(projects_root: Path) -> list[str]:
+    """Return id-less or unparseable files from local memory mirrors."""
+    if not projects_root.is_dir():
+        return []
+    strays = []
+    for path in sorted(projects_root.glob("*/memory/*.md")):
+        if path.name == MEMORY_INDEX or not path.is_file():
+            continue
+        try:
+            parsed = parse_memory_file(path)
+        except (OSError, UnicodeError):
+            parsed = None
+        if parsed is None or parsed["id"] is None:
+            strays.append(str(path))
+    return strays
 
 
 # --- usage (token accounting) ---
@@ -431,7 +497,9 @@ def _claude_code_version() -> str | None:
     return found
 
 
-def cmd_doctor(args: argparse.Namespace) -> None:
+def cmd_doctor(
+    args: argparse.Namespace, *, projects_root: Path | None = None
+) -> None:
     """Deterministic instance diagnostics: connectivity, auth, stats, and data
     anomalies. Prints a compact report and exits 0 - status lives in the text,
     so a wrapper never loses the report to a non-zero exit code."""
@@ -544,6 +612,9 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         if m.get("project_slug") and m["project_slug"] not in slugs
     ]
     pathless = [p["slug"] for p in proj if not p.get("paths")]
+    if projects_root is None:
+        projects_root = Path.home() / ".claude" / "projects"
+    strays = _stray_memory_files(projects_root)
 
     def check(items: list[str], label: str) -> str:
         if not items:
@@ -557,6 +628,8 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     out.append(check(orphans, "memories pinned to an unregistered slug (orphans)"))
     out.append(check(pathless, "projects with no registered path"))
     out.append(check(pending, "projects pending review (auto-registered, unconfirmed)"))
+    if strays:
+        out.append(check(strays, "stray local memory files"))
 
     print("\n".join(out))
 
@@ -600,6 +673,11 @@ def build_parser() -> argparse.ArgumentParser:
     mc.add_argument("--desc", default="")
     mc.add_argument("--body-file")
     mc.add_argument("--project", help="project slug to pin this memory to (omit for global)")
+    mc.add_argument("--model", help="author model override")
+    mc.add_argument(
+        "--flow",
+        help="name of the human-gated flow this write belongs to (server requires it)",
+    )
 
     mu = mem_sub.add_parser("update")
     mu.add_argument("id", type=int)
@@ -607,6 +685,11 @@ def build_parser() -> argparse.ArgumentParser:
     mu.add_argument("--type", choices=["user", "feedback", "project", "reference"])
     mu.add_argument("--desc")
     mu.add_argument("--body-file")
+    mu.add_argument("--model", help="author model override")
+    mu.add_argument(
+        "--flow",
+        help="name of the human-gated flow this write belongs to (server requires it)",
+    )
     scope = mu.add_mutually_exclusive_group()
     scope.add_argument("--project", help="re-scope: pin this memory to a project slug")
     scope.add_argument(
@@ -616,6 +699,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     md = mem_sub.add_parser("delete")
     md.add_argument("id", type=int)
+    md.add_argument(
+        "--flow",
+        help="name of the human-gated flow this write belongs to (server requires it)",
+    )
 
     # --- project ---
     proj = sub.add_parser("project")
@@ -711,6 +798,13 @@ def build_parser() -> argparse.ArgumentParser:
     hdel = hks_sub.add_parser("delete")
     hdel.add_argument("name")
 
+    # --- skills (server-distributed instructions and behavioural skills) ---
+    sks = sub.add_parser("skills", help="server-distributed skills")
+    sks_sub = sks.add_subparsers(dest="command")
+    spull = sks_sub.add_parser("pull", help="write rendered skills for one harness")
+    spull.add_argument("--harness", required=True, choices=HARNESSES)
+    spull.add_argument("--adopt", action="store_true")
+
     usage = sub.add_parser("usage", help="token accounting")
     usage_sub = usage.add_subparsers(dest="command")
 
@@ -731,12 +825,15 @@ def build_parser() -> argparse.ArgumentParser:
     usm.add_argument("--since", help="ISO date/datetime, inclusive")
     usm.add_argument("--until", help="ISO date/datetime, exclusive")
 
-    # --- sync (no subcommand; flags drive direction) ---
-    sync = sub.add_parser("sync", help="reconcile memories between local dir and hydra")
-    sync.add_argument("--pull", action="store_true", help="download only")
-    sync.add_argument("--push", action="store_true", help="upload only")
+    # --- sync ---
+    sync = sub.add_parser("sync", help="pull memories into the local mirror")
+    sync.add_argument("--pull", action="store_true", help="compatibility no-op")
     sync.add_argument("--cwd", help="override cwd (hooks pass $PWD)")
     sync.add_argument("--dry-run", action="store_true")
+
+    sub.add_parser("codex-session-start", help="Codex SessionStart hook entry")
+    sub.add_parser("codex-setup", help="wire the Codex SessionStart hook")
+    sub.add_parser("guard", help="deny memory writes outside a human-gated flow")
 
     # --- doctor (instance health + stats + anomaly checks) ---
     sub.add_parser("doctor", help="diagnose this Hydra instance (health, stats, anomalies)")
@@ -791,10 +888,14 @@ DISPATCH = {
     ("hooks", "get"): cmd_hooks_get,
     ("hooks", "list"): cmd_hooks_list,
     ("hooks", "delete"): cmd_hooks_delete,
+    ("skills", "pull"): cmd_skills_pull,
     ("usage", "report"): cmd_usage_report,
     ("usage", "backfill"): cmd_usage_backfill,
     ("usage", "summary"): cmd_usage_summary,
     ("sync", None): cmd_sync,
+    ("codex-session-start", None): cmd_codex_session_start,
+    ("codex-setup", None): cmd_codex_setup,
+    ("guard", None): cmd_guard,
     ("doctor", None): cmd_doctor,
     ("capture-remote-url", None): cmd_capture_remote_url,
     ("apply-settings", None): cmd_apply_settings,
@@ -815,7 +916,15 @@ def main() -> None:
     # `sync`, `capture-remote-url`, and `apply-settings` are leaf commands;
     # others need a subcommand.
     command = getattr(args, "command", None)
-    leaf_groups = {"sync", "doctor", "capture-remote-url", "apply-settings"}
+    leaf_groups = {
+        "sync",
+        "doctor",
+        "capture-remote-url",
+        "apply-settings",
+        "codex-session-start",
+        "codex-setup",
+        "guard",
+    }
     if args.group not in leaf_groups and not command:
         parser.print_help()
         sys.exit(1)

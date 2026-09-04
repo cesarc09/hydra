@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from server.auth import require_auth
 from server.db import get_db
 from server.models import HookUpsert
+from server.services.skills import SKILLS_WRITE_LOCK, validate
 
 router = APIRouter(prefix="/api/config", tags=["config"], dependencies=[Depends(require_auth)])
 
@@ -20,7 +21,11 @@ _CONFIG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 @router.get("/claude-md")
 async def get_claude_md():
     db = await get_db()
-    rows = list(await db.execute_fetchall("SELECT content FROM claude_md WHERE id = 1"))
+    rows = list(
+        await db.execute_fetchall(
+            "SELECT body FROM skill_variants WHERE name = 'instructions' AND variant = 'common'"
+        )
+    )
     content = rows[0][0] if rows else ""
     return Response(content=content, media_type="text/plain")
 
@@ -31,13 +36,48 @@ async def put_claude_md(request: Request):
     if not content.strip():
         raise HTTPException(status_code=400, detail="CLAUDE.md content cannot be empty")
     now = datetime.now(UTC).replace(microsecond=0).isoformat()
-    db = await get_db()
-    await db.execute(
-        """INSERT INTO claude_md (id, content, updated_at) VALUES (1, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET content = ?, updated_at = ?""",
-        (content, now, content, now),
-    )
-    await db.commit()
+    async with SKILLS_WRITE_LOCK:
+        db = await get_db()
+        rows = await db.execute_fetchall(
+            "SELECT variant, body FROM skill_variants WHERE name = 'instructions'"
+        )
+        variants = {}
+        for row in rows:
+            if row[0] == "common":
+                continue
+            try:
+                slots = json.loads(row[1])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(slots, dict) and all(
+                isinstance(key, str) and isinstance(value, str)
+                for key, value in slots.items()
+            ):
+                variants[row[0]] = slots
+        try:
+            validate(content, variants)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        try:
+            await db.execute(
+                """INSERT INTO skills
+                       (name, kind, enabled, implicit_invocation, instances, updated_at)
+                   VALUES ('instructions', 'instructions', 1, 0, NULL, ?)
+                   ON CONFLICT(name) DO UPDATE SET
+                       kind = 'instructions', enabled = 1, updated_at = ?""",
+                (now, now),
+            )
+            await db.execute(
+                """INSERT INTO skill_variants (name, variant, body)
+                   VALUES ('instructions', 'common', ?)
+                   ON CONFLICT(name, variant) DO UPDATE SET body = ?""",
+                (content, content),
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
     return {"status": "ok", "updated_at": now}
 
 

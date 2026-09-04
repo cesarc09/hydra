@@ -1,7 +1,7 @@
 import sqlite3
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 
 from server.auth import require_auth
 from server.db import get_db
@@ -13,16 +13,23 @@ router = APIRouter(
 
 
 def _now() -> str:
-    """Timestamp for created_at/updated_at.
+    """Keep microseconds because updated_at is stamped into mirror files.
 
-    Keeps microseconds, unlike the rest of the API. `updated_at` is the version
-    token `hydra sync` uses to decide whether a memory changed on the server
-    since a mirror file was written - so two writes to one row MUST produce two
-    different values. Truncated to whole seconds, a re-scope landing in the same
-    second as the mirror's recorded version is invisible, and the stale mirror
-    silently reverts it on the next push.
+    Two writes to one row must produce two distinct provenance values.
     """
     return datetime.now(UTC).isoformat()
+
+
+async def require_flow(x_hydra_flow: str = Header(default="")) -> None:
+    """Require the memory-write flow tripwire."""
+    if not x_hydra_flow.strip() or len(x_hydra_flow) > 64:
+        raise HTTPException(
+            status_code=428,
+            detail=(
+                "memory writes belong to a human-gated flow;"
+                " rerun with --flow <name>"
+            ),
+        )
 
 
 GLOBAL_TYPES = frozenset({"user", "feedback"})
@@ -32,9 +39,8 @@ PROJECT_TYPES = frozenset({"project", "reference"})
 def _type_for_scope(mem_type: str, project_slug: str | None) -> str:
     """Keep a memory's type consistent with its scope, in BOTH directions.
 
-    `hydra sync` derives a memory's scope from its type, so a row whose type and
-    scope disagree is unstable: the next Stop-hook push "corrects" it back, and
-    the human's intent is lost. Hence:
+    Scope is derived from type everywhere (CLI create, dashboard moves), so a
+    row whose type and scope disagree has no stable reading. Hence:
 
     - Pinned (project_slug set) + a global type -> coerced to 'project'. This is
       what auto-scopes the dashboard's Move-to-project.
@@ -94,15 +100,14 @@ async def get_memory(memory_id: int) -> MemoryItem:
     return MemoryItem(**dict(rows[0]))
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(require_flow)])
 async def upsert_memory(memory: MemoryCreate) -> MemoryItem:
     """Upsert on name. Names are globally unique: one name = one memory,
     whatever its scope.
 
     A POST that would move an existing memory to a different scope is refused
-    with 409 unless `rescope` is set. Sync pushes by name when a mirror file has
-    no id, and a by-name push must never be able to silently unpin a memory
-    someone deliberately scoped to a project.
+    with 409 unless `rescope` is set: a by-name upsert must never be able to
+    silently unpin a memory someone deliberately scoped to a project.
     """
     db = await get_db()
     now = _now()
@@ -124,15 +129,20 @@ async def upsert_memory(memory: MemoryCreate) -> MemoryItem:
 
     sql = (
         "INSERT INTO memories (name, description, type, body, project_slug,"
-        " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        " author_harness, author_session_id, author_model, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         " ON CONFLICT(name) DO UPDATE SET description=excluded.description,"
         " type=excluded.type, body=excluded.body,"
-        " project_slug=excluded.project_slug, updated_at=excluded.updated_at"
+        " project_slug=excluded.project_slug,"
+        " author_harness=excluded.author_harness,"
+        " author_session_id=excluded.author_session_id,"
+        " author_model=excluded.author_model, updated_at=excluded.updated_at"
         " RETURNING *"
     )
     params = (
         memory.name, memory.description, mem_type, memory.body,
-        memory.project_slug, now, now,
+        memory.project_slug, memory.author_harness, memory.author_session_id,
+        memory.author_model, now, now,
     )
     try:
         result = list(await db.execute_fetchall(sql, params))
@@ -144,7 +154,7 @@ async def upsert_memory(memory: MemoryCreate) -> MemoryItem:
     return MemoryItem(**dict(result[0]))
 
 
-@router.put("/{memory_id}")
+@router.put("/{memory_id}", dependencies=[Depends(require_flow)])
 async def update_memory(memory_id: int, update: MemoryUpdate) -> MemoryItem:
     db = await get_db()
     rows = list(await db.execute_fetchall(
@@ -158,7 +168,8 @@ async def update_memory(memory_id: int, update: MemoryUpdate) -> MemoryItem:
     # exclude_unset, not "drop the Nones": an explicit {"project_slug": null}
     # must be able to unpin a memory to global scope, which is how a re-scope
     # travels without deleting and re-creating the row (and minting a new id).
-    fields = update.model_dump(exclude_unset=True)
+    author_keys = {"author_harness", "author_session_id", "author_model"}
+    fields = update.model_dump(exclude_unset=True, exclude=author_keys)
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
     for key, value in fields.items():
@@ -173,6 +184,7 @@ async def update_memory(memory_id: int, update: MemoryUpdate) -> MemoryItem:
     if coerced != eff_type:
         fields["type"] = coerced
 
+    fields.update({key: getattr(update, key) for key in author_keys})
     fields["updated_at"] = now
     set_clause = ", ".join(f"{k} = ?" for k in fields)
     values = [*fields.values(), memory_id]
@@ -193,7 +205,9 @@ async def update_memory(memory_id: int, update: MemoryUpdate) -> MemoryItem:
     return MemoryItem(**dict(updated[0]))
 
 
-@router.delete("/{memory_id}", status_code=204)
+@router.delete(
+    "/{memory_id}", status_code=204, dependencies=[Depends(require_flow)]
+)
 async def delete_memory(memory_id: int):
     db = await get_db()
     cursor = await db.execute("DELETE FROM memories WHERE id = ?", (memory_id,))

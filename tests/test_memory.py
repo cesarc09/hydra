@@ -19,6 +19,86 @@ async def _create_memory(client: AsyncClient, **overrides) -> dict:
     return res.json()
 
 
+# --- Flow marker ---
+
+
+@pytest.mark.parametrize("flow", [None, "   ", "x" * 65])
+async def test_create_requires_valid_flow_marker(
+    bare_client: AsyncClient, flow: str | None
+):
+    headers = {"X-Hydra-Flow": flow} if flow is not None else {}
+    res = await bare_client.post(
+        "/api/memory", json={"name": "flow test", "type": "user"},
+        headers=headers,
+    )
+    assert res.status_code == 428
+
+
+async def test_create_accepts_valid_flow_marker(bare_client: AsyncClient):
+    res = await bare_client.post(
+        "/api/memory", json={"name": "flow test", "type": "user"},
+        headers={"X-Hydra-Flow": "sync"},
+    )
+    assert res.status_code == 200
+
+
+@pytest.mark.parametrize("flow", [None, "   ", "x" * 65])
+async def test_update_requires_valid_flow_marker(
+    client: AsyncClient, bare_client: AsyncClient, flow: str | None
+):
+    created = await _create_memory(client, name=f"update {flow!r}")
+    headers = {"X-Hydra-Flow": flow} if flow is not None else {}
+    res = await bare_client.put(
+        f"/api/memory/{created['id']}", json={"body": "changed"},
+        headers=headers,
+    )
+    assert res.status_code == 428
+
+
+async def test_update_accepts_valid_flow_marker(
+    client: AsyncClient, bare_client: AsyncClient
+):
+    created = await _create_memory(client, name="valid update")
+    res = await bare_client.put(
+        f"/api/memory/{created['id']}", json={"body": "changed"},
+        headers={"X-Hydra-Flow": "sync"},
+    )
+    assert res.status_code == 200
+
+
+@pytest.mark.parametrize("flow", [None, "   ", "x" * 65])
+async def test_delete_requires_valid_flow_marker(
+    client: AsyncClient, bare_client: AsyncClient, flow: str | None
+):
+    created = await _create_memory(client, name=f"delete {flow!r}")
+    headers = {"X-Hydra-Flow": flow} if flow is not None else {}
+    res = await bare_client.delete(
+        f"/api/memory/{created['id']}", headers=headers
+    )
+    assert res.status_code == 428
+
+
+async def test_delete_accepts_valid_flow_marker(
+    client: AsyncClient, bare_client: AsyncClient
+):
+    created = await _create_memory(client, name="valid delete")
+    res = await bare_client.delete(
+        f"/api/memory/{created['id']}",
+        headers={"X-Hydra-Flow": "sync"},
+    )
+    assert res.status_code == 204
+
+
+async def test_memory_reads_do_not_require_flow_marker(
+    client: AsyncClient, bare_client: AsyncClient
+):
+    created = await _create_memory(client, name="header-free reads")
+    assert (await bare_client.get("/api/memory")).status_code == 200
+    assert (
+        await bare_client.get(f"/api/memory/{created['id']}")
+    ).status_code == 200
+
+
 # --- List / Get ---
 
 
@@ -37,6 +117,80 @@ async def test_create_and_get_memory(client: AsyncClient):
     res = await client.get(f"/api/memory/{created['id']}")
     assert res.status_code == 200
     assert res.json()["name"] == "user role"
+
+
+async def test_memory_authorship_is_last_writer(client: AsyncClient):
+    created = await _create_memory(
+        client,
+        name="authored",
+        author_harness="claude-code",
+        author_session_id="claude-session",
+        author_model="claude-model",
+    )
+    assert created["author_harness"] == "claude-code"
+    assert created["author_session_id"] == "claude-session"
+    assert created["author_model"] == "claude-model"
+
+    fetched = (await client.get(f"/api/memory/{created['id']}")).json()
+    assert fetched["author_harness"] == "claude-code"
+
+    replaced = await _create_memory(
+        client,
+        name="authored",
+        body="codex write",
+        author_harness="codex-cli",
+        author_session_id="codex-session",
+        author_model="codex-model",
+    )
+    assert replaced["id"] == created["id"]
+    assert replaced["author_harness"] == "codex-cli"
+    assert replaced["author_session_id"] == "codex-session"
+    assert replaced["author_model"] == "codex-model"
+
+    res = await client.put(
+        f"/api/memory/{created['id']}",
+        json={
+            "body": "claude write",
+            "author_harness": "claude-code",
+            "author_session_id": "claude-session-2",
+            "author_model": "claude-model-2",
+        },
+    )
+    assert res.status_code == 200
+    assert res.json()["author_harness"] == "claude-code"
+    assert res.json()["author_session_id"] == "claude-session-2"
+    assert res.json()["author_model"] == "claude-model-2"
+
+    res = await client.put(
+        f"/api/memory/{created['id']}",
+        json={
+            "body": "codex write again",
+            "author_harness": "codex-cli",
+            "author_session_id": "codex-session-2",
+            "author_model": "codex-model-2",
+        },
+    )
+    assert res.status_code == 200
+    assert res.json()["author_session_id"] == "codex-session-2"
+    assert res.json()["author_model"] == "codex-model-2"
+
+    rows = (await client.get("/api/memory")).json()
+    assert rows[0]["author_harness"] == "codex-cli"
+    assert rows[0]["author_session_id"] == "codex-session-2"
+    assert rows[0]["author_model"] == "codex-model-2"
+
+    res = await client.put(
+        f"/api/memory/{created['id']}", json={"body": "dashboard write"}
+    )
+    assert res.status_code == 200
+    assert res.json()["author_harness"] is None
+    assert res.json()["author_session_id"] is None
+    assert res.json()["author_model"] is None
+
+    rows = (await client.get("/api/memory")).json()
+    assert rows[0]["author_harness"] is None
+    assert rows[0]["author_session_id"] is None
+    assert rows[0]["author_model"] is None
 
 
 async def test_list_returns_all(client: AsyncClient):
@@ -69,6 +223,14 @@ async def test_update_nonexistent_returns_404(client: AsyncClient):
 async def test_update_empty_body_returns_400(client: AsyncClient):
     created = await _create_memory(client)
     res = await client.put(f"/api/memory/{created['id']}", json={})
+    assert res.status_code == 400
+
+
+async def test_update_with_only_author_fields_returns_400(client: AsyncClient):
+    created = await _create_memory(client)
+    res = await client.put(
+        f"/api/memory/{created['id']}", json={"author_harness": "codex-cli"}
+    )
     assert res.status_code == 400
 
 
@@ -372,6 +534,16 @@ async def test_list_filtered_by_project_with_globals(client: AsyncClient):
 async def test_memory_auth_required(client: AsyncClient, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("server.config.AUTH_TOKEN", "secret")
     res = await client.get("/api/memory")
+    assert res.status_code == 401
+
+
+async def test_memory_write_auth_runs_before_flow(
+    bare_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr("server.config.AUTH_TOKEN", "secret")
+    res = await bare_client.post(
+        "/api/memory", json={"name": "unauthorized", "type": "user"}
+    )
     assert res.status_code == 401
 
 

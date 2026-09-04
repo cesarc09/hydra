@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from server import config
 from server.db import close_db, get_db
 from server.routers import config as config_router
-from server.routers import hooks, memory, projects, sessions, usage
+from server.routers import hooks, memory, projects, sessions, skills, usage
 
 # Per-path request body caps. Pi memory is the limiting resource; `tool_input`
 # is an unbounded dict otherwise.
@@ -120,13 +120,14 @@ if config.PUBLIC_ORIGIN:
         allow_origins=[f"https://{config.PUBLIC_ORIGIN}"],
         allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "DELETE"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", "X-Hydra-Flow"],
     )
 
 
 app.include_router(hooks.router)
 app.include_router(sessions.router)
 app.include_router(config_router.router)
+app.include_router(skills.router)
 app.include_router(memory.router)
 app.include_router(projects.router)
 app.include_router(usage.router)

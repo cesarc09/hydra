@@ -3,6 +3,7 @@
 import argparse
 import json
 import urllib.error
+from pathlib import Path
 
 from hydra_cli import __main__ as cli
 from hydra_cli import api
@@ -94,3 +95,31 @@ def test_doctor_auth_failed(monkeypatch, capsys):
     cli.cmd_doctor(argparse.Namespace())
     out = capsys.readouterr().out
     assert "auth:      FAILED (401)" in out
+
+
+def test_doctor_reports_stray_memory_files(monkeypatch, capsys, tmp_path: Path):
+    responses = {
+        "/api/health": (200, json.dumps({"status": "ok", "db": "ok"})),
+        "/api/projects": (200, "[]"),
+        "/api/memory": (200, "[]"),
+        "/api/sessions": (200, "[]"),
+    }
+    monkeypatch.setattr(api, "get", _fake_get(responses))
+    monkeypatch.setattr(cli, "_newest_transcript", lambda: None)
+    project_memory = tmp_path / "project" / "memory"
+    project_memory.mkdir(parents=True)
+    stray = project_memory / "stray.md"
+    stray.write_text(
+        "---\nname: stray\ndescription: d\ntype: user\n---\nlocal only\n",
+        encoding="utf-8",
+    )
+    (project_memory / "broken.md").write_text("not frontmatter\n", encoding="utf-8")
+    (project_memory / "MEMORY.md").write_text("index\n", encoding="utf-8")
+
+    cli.cmd_doctor(argparse.Namespace(), projects_root=tmp_path)
+    out = capsys.readouterr().out
+
+    assert "[WARN] stray local memory files: 2" in out
+    assert str(stray) in out
+    assert str(project_memory / "broken.md") in out
+    assert str(project_memory / "MEMORY.md") not in out

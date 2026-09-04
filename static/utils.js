@@ -21,7 +21,7 @@ function clearToken() {
 async function apiFetch(path, opts = {}) {
     ensureToken();
     const tokenUsed = authToken;
-    const headers = { ...(opts.headers || {}) };
+    const headers = { ...(opts.headers || {}), "X-Hydra-Flow": "dashboard" };
     if (tokenUsed) headers["Authorization"] = `Bearer ${tokenUsed}`;
     let res = await fetch(path, { ...opts, headers });
     if (res.status === 401) {
@@ -33,7 +33,7 @@ async function apiFetch(path, opts = {}) {
             ensureToken();
         }
         if (authToken && authToken !== tokenUsed) {
-            const retryHeaders = { ...(opts.headers || {}), Authorization: `Bearer ${authToken}` };
+            const retryHeaders = { ...headers, Authorization: `Bearer ${authToken}` };
             res = await fetch(path, { ...opts, headers: retryHeaders });
         }
     }

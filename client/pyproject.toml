@@ -9,7 +9,6 @@ requires-python = ">=3.11"
 hydra = "hydra_cli.__main__:main"
 
 [tool.setuptools.packages.find]
-# Package only hydra_cli. client/commands/ (slash-command markdown, deployed by
-# setup.sh) is a sibling dir, not a package - without this, setuptools flat-layout
-# auto-discovery finds two top-level packages ('commands', 'hydra_cli') and aborts.
+# Package only hydra_cli. client/skills/ (published by publish_skills.sh) is a sibling
+# source dir, not a package; unrestricted flat-layout discovery would include it.
 include = ["hydra_cli*"]

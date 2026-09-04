@@ -28,7 +28,19 @@ async def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr("server.config.ALLOW_NO_AUTH", True)
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"X-Hydra-Flow": "test"},
+    ) as c:
         yield c
 
     await conn.close()
+
+
+@pytest.fixture
+async def bare_client(client: AsyncClient):
+    """Client sharing the test database without a default flow marker."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c

@@ -1,4 +1,5 @@
 ---
+name: debug-hydra
 description: Diagnose this Hydra instance - server/DB/auth health, stats, and data anomalies, with fixes
 ---
 

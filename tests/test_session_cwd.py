@@ -3,9 +3,9 @@
 Claude Code carries a Bash `cd` over to later tool calls and to hook processes
 as long as it stays inside the project boundary, so `$PWD` at Stop time can be a
 subdirectory. Auto-register then mints that subdir as its own project, and the
-memory mirror path derived from it points at a dir Claude Code never writes to,
-so the Stop push silently uploads nothing. CLAUDE_PROJECT_DIR stays at the
-launch dir for the whole session, which is why the hooks and the CLI use it.
+memory mirror path derived from it points at a dir Claude Code never writes to.
+CLAUDE_PROJECT_DIR stays at the launch dir for the whole session, which is why
+the hook and the CLI use it.
 
 These tests read the shipped hook commands and drive the real CLI entry point
 rather than asserting a hardcoded command string.
@@ -49,6 +49,37 @@ def sync_cwd_exprs() -> list[tuple[str, str]]:
                 found.append((event, m.group(1)))
     assert found, "no hydra_cli sync hook commands found in client/settings.json"
     return found
+
+
+def test_session_start_pulls_rendered_instructions():
+    settings = SETTINGS.read_text()
+    assert "python -m hydra_cli skills pull --harness claude-code" in settings
+    assert "/api/config/skills/instructions" not in settings
+    assert "/api/config/claude-md" not in settings
+
+
+def test_memory_guard_is_wired_for_write_tools() -> None:
+    groups = json.loads(SETTINGS.read_text())["hooks"]["PreToolUse"]
+    guards = [
+        group
+        for group in groups
+        if any(
+            hook.get("command") == "python -m hydra_cli guard"
+            for hook in group.get("hooks", [])
+        )
+    ]
+    assert guards == [
+        {
+            "matcher": "Write|Edit|NotebookEdit|Bash",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "python -m hydra_cli guard",
+                    "timeout": 10,
+                }
+            ],
+        }
+    ]
 
 
 def expand(expr: str, *, cwd: Path, env: dict[str, str]) -> str:
@@ -100,7 +131,7 @@ def _run_cmd_sync(monkeypatch: pytest.MonkeyPatch, **kw: object) -> str:
         return 0
 
     monkeypatch.setattr("hydra_cli.sync.run_sync", fake_run_sync)
-    args = argparse.Namespace(cwd=None, push=False, pull=True, dry_run=False)
+    args = argparse.Namespace(cwd=None, pull=True, dry_run=False)
     for k, v in kw.items():
         setattr(args, k, v)
     with pytest.raises(SystemExit) as exc:

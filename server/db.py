@@ -35,6 +35,31 @@ async def _migrate(conn: aiosqlite.Connection) -> None:
     tables don't appear without an ALTER. Keep this short - each block should
     check for its target state before acting.
     """
+    cursor = await conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'claude_md'"
+    )
+    if await cursor.fetchone():
+        has_instructions = await conn.execute(
+            "SELECT 1 FROM skills WHERE name = 'instructions'"
+        )
+        if not await has_instructions.fetchone():
+            legacy = await conn.execute("SELECT content FROM claude_md WHERE id = 1")
+            row = await legacy.fetchone()
+            if row is not None:
+                now = _utcnow()
+                await conn.execute(
+                    """INSERT INTO skills
+                           (name, kind, enabled, implicit_invocation, instances, updated_at)
+                       VALUES ('instructions', 'instructions', 1, 0, NULL, ?)""",
+                    (now,),
+                )
+                await conn.execute(
+                    """INSERT INTO skill_variants (name, variant, body)
+                       VALUES ('instructions', 'common', ?)""",
+                    (row[0],),
+                )
+        await conn.execute("DROP TABLE claude_md")
+
     cursor = await conn.execute("PRAGMA table_info(memories)")
     cols = {row[1] for row in await cursor.fetchall()}
     if "project_slug" not in cols:
@@ -42,6 +67,15 @@ async def _migrate(conn: aiosqlite.Connection) -> None:
             "ALTER TABLE memories ADD COLUMN project_slug TEXT "
             "REFERENCES projects(slug) ON DELETE SET NULL"
         )
+    if "author_harness" not in cols:
+        await conn.execute("ALTER TABLE memories ADD COLUMN author_harness TEXT")
+        await conn.execute(
+            "UPDATE memories SET author_harness = 'claude-code'"
+        )
+    if "author_session_id" not in cols:
+        await conn.execute("ALTER TABLE memories ADD COLUMN author_session_id TEXT")
+    if "author_model" not in cols:
+        await conn.execute("ALTER TABLE memories ADD COLUMN author_model TEXT")
 
     await _ensure_unique_memory_names(conn)
 

@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 MemoryType = Literal["user", "feedback", "project", "reference"]
 HookRuntime = Literal["python", "bash"]
+SkillKind = Literal["instructions", "skill"]
 
 
 class HookEvent(BaseModel):
@@ -66,6 +67,9 @@ class MemoryCreate(BaseModel):
     type: MemoryType
     body: str = ""
     project_slug: str | None = None
+    author_harness: str | None = None
+    author_session_id: str | None = None
+    author_model: str | None = None
     # Names are globally unique. A POST whose name already exists in a DIFFERENT
     # scope is rejected with 409 unless the caller explicitly opts in to moving
     # it. Without this, any by-name push could silently re-scope a memory some-
@@ -78,13 +82,17 @@ class MemoryUpdate(BaseModel):
     """Partial update - only fields PRESENT in the request body are applied
     (model_dump(exclude_unset=True)), so `{"project_slug": null}` unpins a
     memory to global scope while an omitted project_slug leaves scope alone.
-    project_slug is the only nullable field; an explicit null elsewhere is a 422.
+    Existing content fields reject explicit nulls except project_slug. Author
+    fields are always written from their values, including default nulls.
     """
     name: str | None = None
     description: str | None = None
     type: MemoryType | None = None
     body: str | None = None
     project_slug: str | None = None
+    author_harness: str | None = None
+    author_session_id: str | None = None
+    author_model: str | None = None
 
 
 class MemoryItem(BaseModel):
@@ -94,8 +102,23 @@ class MemoryItem(BaseModel):
     type: MemoryType
     body: str
     project_slug: str | None = None
+    author_harness: str | None = None
+    author_session_id: str | None = None
+    author_model: str | None = None
     created_at: str
     updated_at: str
+
+
+# --- Distributed skills ---
+
+
+class SkillUpsert(BaseModel):
+    kind: SkillKind
+    enabled: bool = True
+    implicit_invocation: bool = False
+    instances: list[str] | None = None
+    common: str
+    variants: dict[str, dict[str, str]] = Field(default_factory=dict)
 
 
 # --- Distributed hooks ---

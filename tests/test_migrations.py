@@ -16,6 +16,7 @@ import aiosqlite
 import pytest
 
 from server import db as db_module
+from server.services.skills import render
 
 pytestmark = pytest.mark.asyncio
 
@@ -37,6 +38,14 @@ CREATE UNIQUE INDEX idx_memories_global
     ON memories(name) WHERE project_slug IS NULL;
 CREATE UNIQUE INDEX idx_memories_project
     ON memories(name, project_slug) WHERE project_slug IS NOT NULL;
+"""
+
+LEGACY_CLAUDE_MD = """
+CREATE TABLE claude_md (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    content TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -172,6 +181,34 @@ async def test_migration_is_idempotent(tmp_path: Path):
     await conn.close()
 
 
+async def test_migration_backfills_authorship_only_once(tmp_path: Path):
+    conn = await _legacy_db(tmp_path)
+    memory_id = await _insert(
+        conn, "legacy", slug=None, mem_type="feedback"
+    )
+    await conn.commit()
+
+    await db_module._migrate(conn)
+    await conn.commit()
+    row = next(iter(await conn.execute_fetchall(
+        "SELECT author_harness, author_session_id, author_model"
+        " FROM memories WHERE id = ?",
+        (memory_id,),
+    )))
+    assert tuple(row) == ("claude-code", None, None)
+
+    await conn.execute(
+        "UPDATE memories SET author_harness = NULL WHERE id = ?", (memory_id,)
+    )
+    await db_module._migrate(conn)
+    await conn.commit()
+    row = next(iter(await conn.execute_fetchall(
+        "SELECT author_harness FROM memories WHERE id = ?", (memory_id,)
+    )))
+    assert row["author_harness"] is None
+    await conn.close()
+
+
 async def test_migration_rejects_duplicate_after_migrating(tmp_path: Path):
     """After the swap, the DB itself refuses a second row with the same name."""
     conn = await _legacy_db(tmp_path)
@@ -192,4 +229,54 @@ async def test_fresh_schema_has_unique_name_index(tmp_path: Path):
     conn.row_factory = aiosqlite.Row
     await conn.executescript(SCHEMA_PATH.read_text())
     assert await db_module._has_unique_name_index(conn)
+    await conn.close()
+
+
+async def test_claude_md_migrates_verbatim_then_table_is_dropped(tmp_path: Path):
+    conn = await aiosqlite.connect(tmp_path / "claude-md.db")
+    conn.row_factory = aiosqlite.Row
+    await conn.executescript(SCHEMA_PATH.read_text())
+    await conn.executescript(LEGACY_CLAUDE_MD)
+    content = "Keep this literal: {{x}}\n"
+    await conn.execute(
+        "INSERT INTO claude_md (id, content, updated_at) VALUES (1, ?, 'old')",
+        (content,),
+    )
+    await db_module._migrate(conn)
+    await conn.commit()
+
+    row = next(iter(await conn.execute_fetchall(
+        """SELECT s.kind, v.variant, v.body
+           FROM skills s JOIN skill_variants v ON v.name = s.name
+           WHERE s.name = 'instructions'"""
+    )))
+    assert tuple(row) == ("instructions", "common", content)
+    assert render(row[2], None) == content
+    assert not await conn.execute_fetchall(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'claude_md'"
+    )
+
+    await conn.execute(
+        "UPDATE skill_variants SET body = 'edited' WHERE name = 'instructions'"
+    )
+    await db_module._migrate(conn)
+    rows = list(await conn.execute_fetchall(
+        "SELECT body FROM skill_variants WHERE name = 'instructions'"
+    ))
+    assert rows[0][0] == "edited"
+    await conn.close()
+
+
+async def test_empty_legacy_claude_md_creates_no_instructions(tmp_path: Path):
+    conn = await aiosqlite.connect(tmp_path / "empty-claude-md.db")
+    conn.row_factory = aiosqlite.Row
+    await conn.executescript(SCHEMA_PATH.read_text())
+    await conn.executescript(LEGACY_CLAUDE_MD)
+    await db_module._migrate(conn)
+    assert not await conn.execute_fetchall(
+        "SELECT 1 FROM skills WHERE name = 'instructions'"
+    )
+    assert not await conn.execute_fetchall(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'claude_md'"
+    )
     await conn.close()
