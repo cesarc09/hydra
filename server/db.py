@@ -42,6 +42,15 @@ async def _migrate(conn: aiosqlite.Connection) -> None:
             "ALTER TABLE memories ADD COLUMN project_slug TEXT "
             "REFERENCES projects(slug) ON DELETE SET NULL"
         )
+    if "author_harness" not in cols:
+        await conn.execute("ALTER TABLE memories ADD COLUMN author_harness TEXT")
+        await conn.execute(
+            "UPDATE memories SET author_harness = 'claude-code'"
+        )
+    if "author_session_id" not in cols:
+        await conn.execute("ALTER TABLE memories ADD COLUMN author_session_id TEXT")
+    if "author_model" not in cols:
+        await conn.execute("ALTER TABLE memories ADD COLUMN author_model TEXT")
 
     await _ensure_unique_memory_names(conn)
 

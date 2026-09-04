@@ -39,6 +39,80 @@ async def test_create_and_get_memory(client: AsyncClient):
     assert res.json()["name"] == "user role"
 
 
+async def test_memory_authorship_is_last_writer(client: AsyncClient):
+    created = await _create_memory(
+        client,
+        name="authored",
+        author_harness="claude-code",
+        author_session_id="claude-session",
+        author_model="claude-model",
+    )
+    assert created["author_harness"] == "claude-code"
+    assert created["author_session_id"] == "claude-session"
+    assert created["author_model"] == "claude-model"
+
+    fetched = (await client.get(f"/api/memory/{created['id']}")).json()
+    assert fetched["author_harness"] == "claude-code"
+
+    replaced = await _create_memory(
+        client,
+        name="authored",
+        body="codex write",
+        author_harness="codex-cli",
+        author_session_id="codex-session",
+        author_model="codex-model",
+    )
+    assert replaced["id"] == created["id"]
+    assert replaced["author_harness"] == "codex-cli"
+    assert replaced["author_session_id"] == "codex-session"
+    assert replaced["author_model"] == "codex-model"
+
+    res = await client.put(
+        f"/api/memory/{created['id']}",
+        json={
+            "body": "claude write",
+            "author_harness": "claude-code",
+            "author_session_id": "claude-session-2",
+            "author_model": "claude-model-2",
+        },
+    )
+    assert res.status_code == 200
+    assert res.json()["author_harness"] == "claude-code"
+    assert res.json()["author_session_id"] == "claude-session-2"
+    assert res.json()["author_model"] == "claude-model-2"
+
+    res = await client.put(
+        f"/api/memory/{created['id']}",
+        json={
+            "body": "codex write again",
+            "author_harness": "codex-cli",
+            "author_session_id": "codex-session-2",
+            "author_model": "codex-model-2",
+        },
+    )
+    assert res.status_code == 200
+    assert res.json()["author_session_id"] == "codex-session-2"
+    assert res.json()["author_model"] == "codex-model-2"
+
+    rows = (await client.get("/api/memory")).json()
+    assert rows[0]["author_harness"] == "codex-cli"
+    assert rows[0]["author_session_id"] == "codex-session-2"
+    assert rows[0]["author_model"] == "codex-model-2"
+
+    res = await client.put(
+        f"/api/memory/{created['id']}", json={"body": "dashboard write"}
+    )
+    assert res.status_code == 200
+    assert res.json()["author_harness"] is None
+    assert res.json()["author_session_id"] is None
+    assert res.json()["author_model"] is None
+
+    rows = (await client.get("/api/memory")).json()
+    assert rows[0]["author_harness"] is None
+    assert rows[0]["author_session_id"] is None
+    assert rows[0]["author_model"] is None
+
+
 async def test_list_returns_all(client: AsyncClient):
     await _create_memory(client, name="m1")
     await _create_memory(client, name="m2")
@@ -69,6 +143,14 @@ async def test_update_nonexistent_returns_404(client: AsyncClient):
 async def test_update_empty_body_returns_400(client: AsyncClient):
     created = await _create_memory(client)
     res = await client.put(f"/api/memory/{created['id']}", json={})
+    assert res.status_code == 400
+
+
+async def test_update_with_only_author_fields_returns_400(client: AsyncClient):
+    created = await _create_memory(client)
+    res = await client.put(
+        f"/api/memory/{created['id']}", json={"author_harness": "codex-cli"}
+    )
     assert res.status_code == 400
 
 

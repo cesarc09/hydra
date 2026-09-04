@@ -110,6 +110,9 @@ CREATE TABLE IF NOT EXISTS memories (
     type TEXT NOT NULL CHECK (type IN ('user', 'feedback', 'project', 'reference')),
     body TEXT NOT NULL DEFAULT '',
     project_slug TEXT REFERENCES projects(slug) ON DELETE SET NULL,
+    author_harness TEXT,
+    author_session_id TEXT,
+    author_model TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );

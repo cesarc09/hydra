@@ -172,6 +172,34 @@ async def test_migration_is_idempotent(tmp_path: Path):
     await conn.close()
 
 
+async def test_migration_backfills_authorship_only_once(tmp_path: Path):
+    conn = await _legacy_db(tmp_path)
+    memory_id = await _insert(
+        conn, "legacy", slug=None, mem_type="feedback"
+    )
+    await conn.commit()
+
+    await db_module._migrate(conn)
+    await conn.commit()
+    row = next(iter(await conn.execute_fetchall(
+        "SELECT author_harness, author_session_id, author_model"
+        " FROM memories WHERE id = ?",
+        (memory_id,),
+    )))
+    assert tuple(row) == ("claude-code", None, None)
+
+    await conn.execute(
+        "UPDATE memories SET author_harness = NULL WHERE id = ?", (memory_id,)
+    )
+    await db_module._migrate(conn)
+    await conn.commit()
+    row = next(iter(await conn.execute_fetchall(
+        "SELECT author_harness FROM memories WHERE id = ?", (memory_id,)
+    )))
+    assert row["author_harness"] is None
+    await conn.close()
+
+
 async def test_migration_rejects_duplicate_after_migrating(tmp_path: Path):
     """After the swap, the DB itself refuses a second row with the same name."""
     conn = await _legacy_db(tmp_path)

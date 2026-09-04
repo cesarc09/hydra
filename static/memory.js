@@ -255,6 +255,11 @@ function renderMemoryRow(m, isGlobal) {
     }
     actions.push(`<span class="memory-action memory-action-danger" onclick="deleteMemory(${m.id})">Delete</span>`);
     const form = renderInlineForm(m);
+    const authorParts = [m.author_harness, m.author_model, m.author_session_id?.slice(0, 8)]
+        .filter(Boolean).map(escHtml);
+    const author = m.author_harness
+        ? `<div class="memory-description">by ${authorParts.join(" · ")}</div>`
+        : "";
     return `
         <div class="memory-row">
             <div class="memory-head">
@@ -266,6 +271,7 @@ function renderMemoryRow(m, isGlobal) {
                 <span class="memory-actions">${actions.join("")}</span>
             </div>
             ${m.description ? `<div class="memory-description">${escHtml(m.description)}</div>` : ""}
+            ${author}
             ${form}
             ${expanded ? `<pre class="memory-body">${escHtml(m.body || "")}</pre>` : ""}
         </div>

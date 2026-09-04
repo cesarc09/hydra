@@ -122,15 +122,20 @@ async def upsert_memory(memory: MemoryCreate) -> MemoryItem:
 
     sql = (
         "INSERT INTO memories (name, description, type, body, project_slug,"
-        " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        " author_harness, author_session_id, author_model, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         " ON CONFLICT(name) DO UPDATE SET description=excluded.description,"
         " type=excluded.type, body=excluded.body,"
-        " project_slug=excluded.project_slug, updated_at=excluded.updated_at"
+        " project_slug=excluded.project_slug,"
+        " author_harness=excluded.author_harness,"
+        " author_session_id=excluded.author_session_id,"
+        " author_model=excluded.author_model, updated_at=excluded.updated_at"
         " RETURNING *"
     )
     params = (
         memory.name, memory.description, mem_type, memory.body,
-        memory.project_slug, now, now,
+        memory.project_slug, memory.author_harness, memory.author_session_id,
+        memory.author_model, now, now,
     )
     try:
         result = list(await db.execute_fetchall(sql, params))
@@ -156,7 +161,8 @@ async def update_memory(memory_id: int, update: MemoryUpdate) -> MemoryItem:
     # exclude_unset, not "drop the Nones": an explicit {"project_slug": null}
     # must be able to unpin a memory to global scope, which is how a re-scope
     # travels without deleting and re-creating the row (and minting a new id).
-    fields = update.model_dump(exclude_unset=True)
+    author_keys = {"author_harness", "author_session_id", "author_model"}
+    fields = update.model_dump(exclude_unset=True, exclude=author_keys)
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
     for key, value in fields.items():
@@ -171,6 +177,7 @@ async def update_memory(memory_id: int, update: MemoryUpdate) -> MemoryItem:
     if coerced != eff_type:
         fields["type"] = coerced
 
+    fields.update({key: getattr(update, key) for key in author_keys})
     fields["updated_at"] = now
     set_clause = ", ".join(f"{k} = ?" for k in fields)
     values = [*fields.values(), memory_id]

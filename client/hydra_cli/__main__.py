@@ -11,6 +11,7 @@ from pathlib import Path
 
 from hydra_cli import api
 from hydra_cli.apply_settings import cmd_apply_settings
+from hydra_cli.author import author_fields
 from hydra_cli.commands import run_pull
 from hydra_cli.hooks import run_pull as run_hooks_pull
 from hydra_cli.prune import cmd_project_prune
@@ -119,7 +120,7 @@ def cmd_memory_get(args: argparse.Namespace) -> None:
 
 
 def cmd_memory_create(args: argparse.Namespace) -> None:
-    payload: dict[str, str] = {
+    payload: dict[str, object] = {
         "name": args.name,
         "type": args.type,
     }
@@ -130,6 +131,12 @@ def cmd_memory_create(args: argparse.Namespace) -> None:
     body_text = _read_body(args)
     if body_text:
         payload["body"] = body_text
+    payload.update(author_fields(
+        os.environ,
+        claude_root=Path("~/.claude/projects").expanduser(),
+        codex_root=Path("~/.codex/sessions").expanduser(),
+        model=args.model,
+    ))
     status, body = api.post("/api/memory", payload)
     if status != 200:
         _die(status, body)
@@ -167,6 +174,12 @@ def cmd_memory_update(args: argparse.Namespace) -> None:
     if not payload:
         print("Nothing to update", file=sys.stderr)
         sys.exit(1)
+    payload.update(author_fields(
+        os.environ,
+        claude_root=Path("~/.claude/projects").expanduser(),
+        codex_root=Path("~/.codex/sessions").expanduser(),
+        model=args.model,
+    ))
     status, body = api.put_json(f"/api/memory/{args.id}", payload)
     if status != 200:
         _die(status, body)
@@ -630,6 +643,7 @@ def build_parser() -> argparse.ArgumentParser:
     mc.add_argument("--desc", default="")
     mc.add_argument("--body-file")
     mc.add_argument("--project", help="project slug to pin this memory to (omit for global)")
+    mc.add_argument("--model", help="author model override")
 
     mu = mem_sub.add_parser("update")
     mu.add_argument("id", type=int)
@@ -637,6 +651,7 @@ def build_parser() -> argparse.ArgumentParser:
     mu.add_argument("--type", choices=["user", "feedback", "project", "reference"])
     mu.add_argument("--desc")
     mu.add_argument("--body-file")
+    mu.add_argument("--model", help="author model override")
     scope = mu.add_mutually_exclusive_group()
     scope.add_argument("--project", help="re-scope: pin this memory to a project slug")
     scope.add_argument(
