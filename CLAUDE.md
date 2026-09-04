@@ -104,18 +104,14 @@ client/
                               (Hydra-owned, overwritten every run; a user's own
                               ~/.claude/statusline.sh is never touched)
   hydra_statusline.py      - Status-line renderer: context bar, 250k SPLIT flag, cache countdown
-  commands/                - Authoring home for PUBLIC slash-command sources (*.md):
-                              seeded into the server by scripts/publish_commands.sh and
-                              pulled to ~/.claude/commands/ via the `commands pull` hook
-                              (the server is the single distribution source).
-    debug-hydra.md         - /debug-hydra: thin slash - runs `hydra doctor` and has Claude
-                              interpret the result (health verdict, anomalies, fixes).
+  skills/                  - Repo-authored public skills, seeded into the skills store
+    debug-hydra/common.md  - Diagnose Hydra health, anomalies, and fixes via `hydra doctor`
   setup.sh                 - Shared CLI install gate; dispatches both harness setup scripts
   setup_claude.sh          - Pulls Claude content, renders settings, installs the status line
   setup_codex.sh           - Wires the Codex SessionStart hook when Codex is installed
 scripts/
-  publish_commands.sh   - Seed a dir of *.md (default client/commands/) into the server's
-                          command store; the source dir is an argument
+  publish_skills.sh     - Entry point for seeding client/skills/ into the skills store
+  publish_skills.py     - Stdlib-only skill source validation and publisher
 static/
   index.html, app.js   - Sessions dashboard (/); archive, Recent Events chip filter
   memory.html, memory.js - Memory dashboard (/memory); browse, delete, copy, move,
@@ -134,6 +130,7 @@ tests/
   test_hooks.py       - Hook ingestion + state machine
   test_config.py      - CLAUDE.md endpoint
   test_config_skills.py - Skills publish/delete, validation, auth, and render endpoints
+  test_publish_skills.py - Repo-authored skill validation and publishing
   test_memory.py      - Memory CRUD + unique-name upsert/409/rescope + unpin + scoping
   test_migrations.py  - Legacy partial-index DB → UNIQUE(name) (twin collapse, rename,
                         idempotency)
@@ -190,7 +187,7 @@ schema.sql            - DDL; sessions.archived_at, memories project_slug FK + UN
 - **Type<->scope invariant, enforced in BOTH directions** (`_type_for_scope` in `routers/memory.py`, on upsert *and* update). Pinned + a global type -> coerced to `project` (this is what auto-scopes the dashboard's Move-to-project). Global + a project-scoped type -> **422**, because there is no way to guess user vs feedback; the caller has to say. So `hydra memory update <id> --global` requires `--type user|feedback`, and the dashboard's Move-to-Global asks for one.
 - **Skills store:** `skills` holds instructions and behavioural-skill metadata; `skill_variants` holds one common markdown body plus optional harness slot maps. Markers are exactly `{{name}}` for lowercase identifier names, rendered in one pass. Validation covers only variants present, and a missing harness variant leaves common byte-identical. Full publishes run under one shared lock. `/api/config/claude-md` round-trips raw `instructions/common`, while SessionStart pulls the rendered harness map. Migration copies a legacy blob only when no instructions row exists, then always drops `claude_md`.
 - **Skills pull:** `skills pull --harness claude-code|codex-cli` fetches the rendered harness map once, applies `enabled` and `instances` locally, and installs instructions plus skills with atomic per-file writes. Per-harness state in `~/.claude/.hydra-skills-<harness>.json` scopes prune to owned skill files; an empty server prunes nothing, instructions are never pruned, unmanaged conflicts require `--adopt`, and symlinks are always refused. Claude gets `disable-model-invocation` frontmatter for explicit-only skills; Codex gets verbatim SKILL.md plus generated `agents/openai.yaml`.
-- **Slash-command distribution:** the server is the single distribution source for slash commands. `config_commands` is a `name -> content` blob table; `GET /api/config/commands` returns the whole `{name: content}` map in one round trip (no manifest - YAGNI), plus per-name GET/PUT/DELETE. Names are validated server-side to `^[A-Za-z0-9][A-Za-z0-9_-]*$` (no path separators / leading dot). The SessionStart `commands pull` hook writes each into `~/.claude/commands/<name>.md` **verbatim** - deliberately NOT via `sync.py`'s `_base_slug`, which would rename `code-review` → `code_review` and break the command - and prunes via a managed-names state file (`~/.claude/.hydra-commands.json`) so it only ever deletes files it wrote, never hand-authored ones. Public commands are authored in `client/commands/` and seeded with `scripts/publish_commands.sh` (run on deploy); private/per-deployment commands are seeded from their own source, so Hydra's repo carries no deployment-specific command content.
+- **Slash-command distribution:** `config_commands` is a `name -> content` blob table; `GET /api/config/commands` returns the whole `{name: content}` map in one round trip, plus per-name GET/PUT/DELETE. Names are validated server-side to `^[A-Za-z0-9][A-Za-z0-9_-]*$`. The SessionStart `commands pull` hook writes each into `~/.claude/commands/<name>.md` **verbatim** - deliberately NOT via `sync.py`'s `_base_slug`, which would rename `code-review` -> `code_review` and break the command - and prunes via a managed-names state file (`~/.claude/.hydra-commands.json`) so it only ever deletes files it wrote. It stays for private, unmigrated commands; the public `debug-hydra` is a skill in `client/skills/`, seeded with `scripts/publish_skills.sh`. Once a command is migrated, `hydra commands delete <name>` on the server lets the next pull prune its old file.
 - **Policy-hook distribution (read the exit-2 note before touching `hooks.py`).** `config_hooks` carries a hook's **script body and its settings.json wiring in one row**, and they must never travel separately. `python <missing>.py` exits **2**, and exit 2 on `PreToolUse` is the *blocking* code - so wiring that reaches a machine ahead of its script converts a fail-open guard into a hard deny of every matching tool call. `run_pull` therefore emits wiring **only for a name whose file is on disk after the write phase**; that check is the whole safety story, not the compile check. Corollaries:
   - **Wiring says `python`, never `python3`, and never an absolute path.** Hook commands run in shell form - `sh -c` on macOS/Linux, **Git Bash on Windows**, PowerShell only if Git Bash is absent - and Windows has no `python3` on PATH (the python.org installer ships `python.exe` and `py.exe`; the `python3.exe` that resolves there is the Microsoft Store alias stub). `python3` wiring therefore installed all four policy hooks on Windows and ran none of them, silently, for weeks. Bare `python` is the same interpreter contract `setup.sh` and `client/settings.json` already depend on, and a bare name keeps the layer stable where an absolute `sys.executable` would rewrite `settings.hooks.json` on every venv switch. `run_pull` warns to stderr when a wired runtime's interpreter is not on PATH, because that failure is otherwise invisible: it exits 127, not the blocking 2. `$HOME` in the script path is fine - sh, Git Bash and PowerShell all expand it.
   - **A syntax-broken script keeps the previous file *and* its wiring.** Python content is `compile()`-checked before it is written; on `SyntaxError` the last-good script stays installed and stays wired, because running the previous version beats running nothing for a fail-open hook. A broken script with *no* previous version gets no wiring at all.

@@ -1,7 +1,11 @@
+from pathlib import Path
+
 import pytest
 from httpx import AsyncClient
 
 pytestmark = pytest.mark.asyncio
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def skill_body(**overrides) -> dict:
@@ -35,6 +39,24 @@ async def test_publish_and_render_round_trip(client: AsyncClient):
     one = await client.get("/api/config/skills/review/codex-cli")
     assert one.status_code == 200
     assert one.json() == {"SKILL.md": "Run with codex in quickly."}
+
+
+async def test_shipped_debug_hydra_round_trip(client: AsyncClient):
+    common = (ROOT / "client" / "skills" / "debug-hydra" / "common.md").read_text()
+    response = await client.put(
+        "/api/config/skills/debug-hydra",
+        json={
+            "kind": "skill",
+            "enabled": True,
+            "implicit_invocation": False,
+            "instances": None,
+            "common": common,
+            "variants": {},
+        },
+    )
+    assert response.status_code == 200
+    rendered = await client.get("/api/config/skills/debug-hydra/claude-code")
+    assert rendered.json()["SKILL.md"] == common
 
 
 async def test_common_only_renders_verbatim_for_every_harness(client: AsyncClient):
