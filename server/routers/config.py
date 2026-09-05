@@ -138,6 +138,12 @@ def _hook_row_to_dict(row) -> dict:
         instances = json.loads(row[6]) if row[6] else None
     except json.JSONDecodeError:
         instances = None
+    try:
+        wiring = json.loads(row[7])
+    except (json.JSONDecodeError, TypeError):
+        wiring = {}
+    if not isinstance(wiring, dict):
+        wiring = {}
     return {
         "content": row[0],
         "runtime": row[1],
@@ -146,10 +152,27 @@ def _hook_row_to_dict(row) -> dict:
         "timeout": row[4],
         "enabled": bool(row[5]),
         "instances": instances,
+        "wiring": wiring,
     }
 
 
-_HOOK_COLUMNS = "content, runtime, event, matcher, timeout, enabled, instances"
+_HOOK_COLUMNS = "content, runtime, event, matcher, timeout, enabled, instances, wiring"
+
+
+def _render_hook(row, harness: str) -> dict | None:
+    item = _hook_row_to_dict(row)
+    metadata = item["wiring"].get(harness)
+    if not isinstance(metadata, dict):
+        return None
+    return {
+        "content": item["content"],
+        "runtime": item["runtime"],
+        "event": metadata.get("event"),
+        "matcher": metadata.get("matcher"),
+        "timeout": metadata.get("timeout"),
+        "enabled": item["enabled"],
+        "instances": item["instances"],
+    }
 
 
 @router.get("/hooks")
@@ -165,7 +188,31 @@ async def list_hooks() -> dict[str, dict]:
     rows = await db.execute_fetchall(
         f"SELECT name, {_HOOK_COLUMNS} FROM config_hooks ORDER BY name"
     )
-    return {row[0]: _hook_row_to_dict(row[1:]) for row in rows}
+    result = {}
+    for row in rows:
+        item = _hook_row_to_dict(row[1:])
+        metadata = item["wiring"].get("claude-code")
+        if not isinstance(metadata, dict):
+            continue
+        item.update(metadata)
+        result[row[0]] = item
+    return result
+
+
+@router.get("/hooks/render/{harness}")
+async def render_hooks(harness: str) -> dict[str, dict]:
+    if harness not in ("claude-code", "codex-cli"):
+        raise HTTPException(status_code=422, detail=f"Unsupported harness: {harness}")
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        f"SELECT name, {_HOOK_COLUMNS} FROM config_hooks ORDER BY name"
+    )
+    result = {}
+    for row in rows:
+        item = _render_hook(row[1:], harness)
+        if item is not None:
+            result[row[0]] = item
+    return result
 
 
 @router.get("/hooks/{name}")
@@ -188,24 +235,43 @@ async def put_hook(name: str, hook: HookUpsert):
     if not hook.content.strip():
         raise HTTPException(status_code=400, detail="Hook content cannot be empty")
     instances = json.dumps(hook.instances) if hook.instances is not None else None
+    if hook.wiring is None:
+        wiring = {
+            "claude-code": {
+                "event": hook.event,
+                "matcher": hook.matcher,
+                "timeout": hook.timeout if hook.timeout is not None else 10,
+            }
+        }
+    else:
+        wiring = {
+            harness: metadata.model_dump()
+            for harness, metadata in hook.wiring.items()
+        }
+    claude = wiring.get("claude-code")
+    legacy_event = claude["event"] if claude is not None else ""
+    legacy_matcher = claude["matcher"] if claude is not None else None
+    legacy_timeout = claude["timeout"] if claude is not None else 10
+    stored_wiring = json.dumps(wiring, sort_keys=True)
     now = datetime.now(UTC).replace(microsecond=0).isoformat()
     values = (
         hook.content,
         hook.runtime,
-        hook.event,
-        hook.matcher,
-        hook.timeout,
+        legacy_event,
+        legacy_matcher,
+        legacy_timeout,
         int(hook.enabled),
         instances,
+        stored_wiring,
         now,
     )
     db = await get_db()
     await db.execute(
         f"""INSERT INTO config_hooks (name, {_HOOK_COLUMNS}, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(name) DO UPDATE SET
                 content = ?, runtime = ?, event = ?, matcher = ?, timeout = ?,
-                enabled = ?, instances = ?, updated_at = ?""",
+                enabled = ?, instances = ?, wiring = ?, updated_at = ?""",
         (name, *values, *values),
     )
     await db.commit()

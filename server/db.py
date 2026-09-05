@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 
 import aiosqlite
@@ -122,6 +123,28 @@ async def _migrate(conn: aiosqlite.Connection) -> None:
             "ALTER TABLE usage_messages ADD COLUMN harness TEXT NOT NULL"
             " DEFAULT 'claude-code'"
         )
+
+    cursor = await conn.execute("PRAGMA table_info(config_hooks)")
+    hook_cols = {row[1] for row in await cursor.fetchall()}
+    if "wiring" not in hook_cols:
+        await conn.execute(
+            "ALTER TABLE config_hooks ADD COLUMN wiring TEXT NOT NULL DEFAULT '{}'"
+        )
+        rows = await conn.execute_fetchall(
+            "SELECT name, event, matcher, timeout FROM config_hooks"
+        )
+        for row in rows:
+            wiring = {
+                "claude-code": {
+                    "event": row[1],
+                    "matcher": row[2],
+                    "timeout": row[3],
+                }
+            }
+            await conn.execute(
+                "UPDATE config_hooks SET wiring = ? WHERE name = ?",
+                (json.dumps(wiring), row[0]),
+            )
 
 
 async def _has_unique_name_index(conn: aiosqlite.Connection) -> bool:

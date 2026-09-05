@@ -10,6 +10,7 @@ These tests build that legacy shape by hand and run the real _migrate().
 """
 
 import asyncio
+import json
 from pathlib import Path
 
 import aiosqlite
@@ -305,4 +306,39 @@ async def test_migration_adds_usage_harness_with_default(tmp_path: Path):
     harness = next(row for row in info if row["name"] == "harness")
     assert harness["notnull"] == 1
     assert harness["dflt_value"] == "'claude-code'"
+    await conn.close()
+
+
+async def test_migration_backfills_hook_wiring_from_legacy_columns(tmp_path: Path):
+    conn = await aiosqlite.connect(tmp_path / "legacy-hooks.db")
+    conn.row_factory = aiosqlite.Row
+    await conn.executescript(SCHEMA_PATH.read_text())
+    await conn.execute("DROP TABLE config_hooks")
+    await conn.execute(
+        """CREATE TABLE config_hooks (
+               name TEXT PRIMARY KEY, content TEXT NOT NULL, runtime TEXT NOT NULL,
+               event TEXT NOT NULL, matcher TEXT, timeout INTEGER NOT NULL,
+               enabled INTEGER NOT NULL DEFAULT 1, instances TEXT, updated_at TEXT NOT NULL
+           )"""
+    )
+    await conn.execute(
+        """INSERT INTO config_hooks
+               (name, content, runtime, event, matcher, timeout, updated_at)
+           VALUES ('guard', 'body', 'python', 'PreToolUse', 'Bash', 17, 't')"""
+    )
+
+    await db_module._migrate(conn)
+    await conn.commit()
+    row = next(iter(await conn.execute_fetchall(
+        "SELECT wiring FROM config_hooks WHERE name = 'guard'"
+    )))
+    assert json.loads(row["wiring"]) == {
+        "claude-code": {"event": "PreToolUse", "matcher": "Bash", "timeout": 17}
+    }
+
+    await db_module._migrate(conn)
+    again = next(iter(await conn.execute_fetchall(
+        "SELECT wiring FROM config_hooks WHERE name = 'guard'"
+    )))
+    assert again["wiring"] == row["wiring"]
     await conn.close()

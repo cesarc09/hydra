@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 MemoryType = Literal["user", "feedback", "project", "reference"]
 HookRuntime = Literal["python", "bash"]
@@ -124,25 +124,43 @@ class SkillUpsert(BaseModel):
 # --- Distributed hooks ---
 
 
+class HookWiring(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event: str = Field(min_length=1, max_length=64, pattern=r"^\S+$")
+    matcher: str | None = Field(default=None, max_length=256)
+    timeout: int = Field(default=10, ge=1, le=600)
+
+
 class HookUpsert(BaseModel):
     """Body for PUT /api/config/hooks/{name}: a policy hook's script and its
     settings.json wiring, upserted together.
 
-    `event` is not validated against a fixed list - Claude Code adds hook events
-    often enough that an allowlist here would reject valid config until the
-    server is redeployed. `matcher` is None when the hook should apply to every
-    invocation of its event; the client then emits no `matcher` key at all.
+    Events are not validated against a fixed list because harnesses add them
+    without notice. The legacy metadata form means Claude Code only.
     `instances` is None for "every machine", or a list of HYDRA_INSTANCE_ID
     values to restrict it to; the CLIENT filters on it, so this endpoint keeps
     returning the whole fleet's config to any machine that asks.
     """
     content: str = Field(min_length=1)
     runtime: HookRuntime = "python"
-    event: str = Field(min_length=1, max_length=64, pattern=r"^\S+$")
+    event: str | None = Field(default=None, min_length=1, max_length=64, pattern=r"^\S+$")
     matcher: str | None = Field(default=None, max_length=256)
-    timeout: int = Field(default=10, ge=1, le=600)
+    timeout: int | None = Field(default=None, ge=1, le=600)
+    wiring: dict[Literal["claude-code", "codex-cli"], HookWiring] | None = Field(
+        default=None, min_length=1
+    )
     enabled: bool = True
     instances: list[str] | None = None
+
+    @model_validator(mode="after")
+    def exactly_one_wiring_form(self) -> HookUpsert:
+        legacy = bool(self.model_fields_set & {"event", "matcher", "timeout"})
+        if self.wiring is not None and legacy:
+            raise ValueError("Provide either legacy hook metadata or wiring, not both")
+        if self.wiring is None and self.event is None:
+            raise ValueError("Legacy hook metadata requires event")
+        return self
 
 
 # --- Projects ---

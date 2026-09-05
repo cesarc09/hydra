@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from hydra_cli.hooks import run_pull as run_pull_hooks
 from hydra_cli.skills import codex_home, run_pull
 from hydra_cli.sync import MEMORY_INDEX, memory_dir_for_cwd, run_sync
 
@@ -91,6 +92,7 @@ def run_session_start() -> int:
         for label, action in (
             ("memory sync", lambda: run_sync(cwd)),
             ("skills pull", lambda: run_pull("codex-cli")),
+            ("hooks pull", lambda: run_pull_hooks("codex-cli")),
         ):
             try:
                 action()

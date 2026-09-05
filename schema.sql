@@ -60,10 +60,10 @@ CREATE TABLE IF NOT EXISTS config_commands (
 
 -- Server-distributed policy hooks. One row per hook, carrying BOTH the script
 -- body and its settings.json wiring - they must never travel separately, because
--- `python3 <missing>.py` exits 2 and exit 2 on PreToolUse is the *blocking* code,
+-- `python <missing>.py` exits 2 and exit 2 on PreToolUse is the *blocking* code,
 -- so wiring that outruns its script turns a fail-open guard into a hard deny on
--- every tool call. Clients write content to ~/.claude/hooks/<name>.<ext> and
--- render the wiring into ~/.claude/settings.json via apply-settings.
+-- every tool call. Clients install scripts and wiring in each harness's own
+-- config directory.
 CREATE TABLE IF NOT EXISTS config_hooks (
     name       TEXT PRIMARY KEY,
     content    TEXT NOT NULL,
@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS config_hooks (
     event      TEXT NOT NULL,          -- Claude Code hook event, e.g. PreToolUse
     matcher    TEXT,                   -- NULL = emit no matcher key
     timeout    INTEGER NOT NULL,
+    wiring     TEXT NOT NULL DEFAULT '{}', -- per-harness event/matcher/timeout JSON
     enabled    INTEGER NOT NULL DEFAULT 1,
     instances  TEXT,                   -- NULL = every machine; else a JSON array
                                        -- of HYDRA_INSTANCE_ID values

@@ -334,7 +334,7 @@ def cmd_commands_delete(args: argparse.Namespace) -> None:
 
 
 def cmd_hooks_pull(args: argparse.Namespace) -> None:
-    sys.exit(run_hooks_pull())
+    sys.exit(run_hooks_pull(args.harness, adopt=args.adopt))
 
 
 def cmd_skills_pull(args: argparse.Namespace) -> None:
@@ -353,16 +353,89 @@ def cmd_guard(args: argparse.Namespace) -> None:
     run_guard_main()
 
 
-def cmd_hooks_put(args: argparse.Namespace) -> None:
-    with open(args.file, encoding="utf-8") as f:
-        content = f.read()
-    payload: dict[str, object] = {
-        "content": content,
-        "runtime": args.runtime,
-        "event": args.event,
-        "timeout": args.timeout,
-        "enabled": not args.disabled,
+def _hook_cli_error(message: str) -> None:
+    print(f"Error: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def _hook_wiring_file(path: Path) -> dict[str, object]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        _hook_cli_error(f"invalid hook wiring file {path}: {exc}")
+    if not isinstance(data, dict):
+        _hook_cli_error(f"hook wiring file must contain an object: {path}")
+    extra = set(data) - {"event", "matcher", "timeout", "distribute"}
+    if extra:
+        _hook_cli_error(f"unknown hook wiring field {sorted(extra)[0]!r}: {path}")
+    event = data.get("event")
+    if not isinstance(event, str) or re.fullmatch(r"\S{1,64}", event) is None:
+        _hook_cli_error(f"event must be 1..64 non-whitespace characters: {path}")
+    matcher = data.get("matcher")
+    if matcher is not None and (not isinstance(matcher, str) or len(matcher) > 256):
+        _hook_cli_error(f"matcher must be null or at most 256 characters: {path}")
+    timeout = data.get("timeout", 10)
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 600:
+        _hook_cli_error(f"timeout must be an integer from 1 to 600: {path}")
+    distribute = data.get("distribute", True)
+    if not isinstance(distribute, bool):
+        _hook_cli_error(f"distribute must be true or false: {path}")
+    return {
+        "event": event,
+        "matcher": matcher,
+        "timeout": timeout,
+        "distribute": distribute,
     }
+
+
+def _hook_directory_payload(args: argparse.Namespace, directory: Path) -> dict[str, object]:
+    if any(
+        value is not None
+        for value in (args.event, args.matcher, args.runtime, args.timeout)
+    ):
+        _hook_cli_error("--event, --matcher, --runtime and --timeout are file-form only")
+    scripts = [path for path in (directory / "hook.py", directory / "hook.sh") if path.is_file()]
+    if len(scripts) != 1:
+        _hook_cli_error("hook directory must contain exactly one of hook.py or hook.sh")
+
+    wiring: dict[str, object] = {}
+    for path in sorted(directory.glob("*.json")):
+        if path.stem not in HARNESSES:
+            _hook_cli_error(f"unknown harness wiring file: {path.name}")
+        metadata = _hook_wiring_file(path)
+        if metadata.pop("distribute"):
+            wiring[path.stem] = metadata
+    if not wiring:
+        _hook_cli_error("hook directory has no distributable harness wiring")
+    try:
+        content = scripts[0].read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        _hook_cli_error(f"cannot read hook script {scripts[0]}: {exc}")
+    return {
+        "content": content,
+        "runtime": "python" if scripts[0].suffix == ".py" else "bash",
+        "wiring": wiring,
+    }
+
+
+def cmd_hooks_put(args: argparse.Namespace) -> None:
+    source = Path(args.file)
+    if source.is_dir():
+        payload = _hook_directory_payload(args, source)
+    else:
+        if args.event is None:
+            _hook_cli_error("--event is required when publishing a hook file")
+        try:
+            content = source.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            _hook_cli_error(f"cannot read hook script {source}: {exc}")
+        payload = {
+            "content": content,
+            "runtime": args.runtime or "python",
+            "event": args.event,
+            "timeout": args.timeout if args.timeout is not None else 10,
+        }
+    payload["enabled"] = not args.disabled
     if args.matcher:
         payload["matcher"] = args.matcher
     if args.instances:
@@ -381,17 +454,27 @@ def cmd_hooks_get(args: argparse.Namespace) -> None:
 
 
 def cmd_hooks_list(args: argparse.Namespace) -> None:
-    status, body = api.get("/api/config/hooks")
-    if status != 200:
-        _die(status, body)
-    for name, spec in sorted(json.loads(body).items()):
+    rows = []
+    fetched = 0
+    for harness in HARNESSES:
+        status, body = api.get(f"/api/config/hooks/render/{harness}")
+        if status != 200:
+            print(f"hooks list [{harness}] failed ({status}): {body}", file=sys.stderr)
+            continue
+        fetched += 1
+        payload = json.loads(body)
+        for name, spec in payload.items():
+            rows.append((name, harness, spec))
+    if not fetched:
+        sys.exit(1)
+    for name, harness, spec in sorted(rows):
         flags = [] if spec.get("enabled", True) else ["disabled"]
         if spec.get("matcher"):
-            flags.append(f"matcher={spec['matcher']}")
+            flags.insert(0, f"matcher={spec['matcher']}")
         if spec.get("instances"):
             flags.append(f"instances={','.join(spec['instances'])}")
         suffix = f"  [{', '.join(flags)}]" if flags else ""
-        print(f"{name}\t{spec.get('event', '?')}\t{spec.get('runtime', '?')}{suffix}")
+        print(f"{name}\t{harness}\t{spec.get('event', '?')}{suffix}")
 
 
 def cmd_hooks_delete(args: argparse.Namespace) -> None:
@@ -783,15 +866,17 @@ def build_parser() -> argparse.ArgumentParser:
     hks = sub.add_parser("hooks", help="server-distributed policy hooks")
     hks_sub = hks.add_subparsers(dest="command")
 
-    hks_sub.add_parser("pull", help="hook: write server hooks into ~/.claude/hooks")
+    hpull = hks_sub.add_parser("pull", help="write server hooks for one harness")
+    hpull.add_argument("--harness", choices=HARNESSES, default="claude-code")
+    hpull.add_argument("--adopt", action="store_true")
 
-    hput = hks_sub.add_parser("put", help="publish a hook script from a file")
+    hput = hks_sub.add_parser("put", help="publish a hook from a file or directory")
     hput.add_argument("name")
     hput.add_argument("file")
-    hput.add_argument("--event", required=True, help="e.g. PreToolUse, SubagentStart")
+    hput.add_argument("--event", help="e.g. PreToolUse, SubagentStart")
     hput.add_argument("--matcher", help="tool/event matcher; omit to match all")
-    hput.add_argument("--runtime", choices=["python", "bash"], default="python")
-    hput.add_argument("--timeout", type=int, default=10)
+    hput.add_argument("--runtime", choices=["python", "bash"])
+    hput.add_argument("--timeout", type=int)
     hput.add_argument("--instances", help="comma-separated HYDRA_INSTANCE_IDs; omit for all")
     hput.add_argument("--disabled", action="store_true", help="store but do not distribute")
 

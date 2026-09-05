@@ -23,6 +23,11 @@ def session_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         "run_pull",
         lambda harness: calls.append(("pull", harness)) or 0,
     )
+    monkeypatch.setattr(
+        codex_mod,
+        "run_pull_hooks",
+        lambda harness: calls.append(("hooks", harness)) or 0,
+    )
     return memory, calls
 
 
@@ -43,7 +48,11 @@ def test_session_start_emits_only_json_with_small_index(
         "hookEventName": "SessionStart",
         "additionalContext": f"Hydra memory index: {memory}\n\n# Index\n",
     }
-    assert calls == [("sync", "/project"), ("pull", "codex-cli")]
+    assert calls == [
+        ("sync", "/project"),
+        ("pull", "codex-cli"),
+        ("hooks", "codex-cli"),
+    ]
 
 
 def test_session_start_uses_header_when_index_missing(
@@ -89,7 +98,7 @@ def test_session_start_survives_sync_exception_and_empty_stdin(
     monkeypatch.setattr(codex_mod.os, "getcwd", lambda: "/fallback")
     assert codex_mod.run_session_start() == 0
     assert hook_output(capsys)["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert calls == [("pull", "codex-cli")]
+    assert calls == [("pull", "codex-cli"), ("hooks", "codex-cli")]
 
 
 def test_session_start_survives_closed_stdin(
@@ -103,7 +112,11 @@ def test_session_start_survives_closed_stdin(
 
     assert codex_mod.run_session_start() == 0
     assert hook_output(capsys)["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert calls == [("sync", "/fallback"), ("pull", "codex-cli")]
+    assert calls == [
+        ("sync", "/fallback"),
+        ("pull", "codex-cli"),
+        ("hooks", "codex-cli"),
+    ]
 
 
 @pytest.fixture

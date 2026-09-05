@@ -1,19 +1,8 @@
-"""Pull server-distributed policy hooks into ~/.claude/hooks.
-
-Each server row carries a hook's script body AND its settings.json wiring, and
-this module keeps them together on the way down. The wiring is written to
-~/.claude/settings.hooks.json, which `apply-settings` merges as a layer - see
-setup.sh, which runs this pull immediately before the render so one renderer
-stays in charge.
-
-The load-bearing invariant is in `run_pull`: wiring is emitted ONLY for a hook
-whose script is on disk afterwards. `python <missing>.py` exits 2, and exit 2
-on PreToolUse is the *blocking* code, so wiring that outruns its script would
-turn a fail-open guard into a hard deny of every tool call on that machine.
-"""
+"""Pull server-distributed policy hooks into Claude Code or Codex."""
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -23,214 +12,417 @@ from pathlib import Path
 from typing import Any
 
 from hydra_cli import api
+from hydra_cli.skills import HARNESSES, codex_home
 
-# A hook name maps 1:1 to a filename, so reject anything that could escape the
-# directory. Same charset the server enforces on write.
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
-
-# Tracks the FILENAMES written by the last successful pull, scoping prune to
-# them. Filenames rather than names so prune stays exact when a hook's runtime
-# changes and its suffix moves with it.
+_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*\.(?:py|sh)$")
 _STATE_FILENAME = ".hydra-hooks.json"
-
-# Set to disable the server-distributed policy hooks on this machine. Scope is
-# exactly those: it empties the generated wiring layer and nothing else. Hydra's
-# own telemetry and sync hooks live in client/settings.json, a layer this module
-# never writes, so observability keeps working on a machine switched off here.
 _DISABLE_ENV = "HYDRA_POLICY_HOOKS_DISABLE"
 
 _RUNTIMES: dict[str, tuple[str, str]] = {
-    # runtime -> (file suffix, interpreter)
-    # `python`, never `python3`: Git Bash on Windows has no python3 on PATH, so
-    # that wiring installed all four policy hooks there and ran none of them.
-    # Bare name, not sys.executable - an absolute path churns the layer.
     "python": (".py", "python"),
     "bash": (".sh", "bash"),
 }
 
 
-def hooks_dir() -> Path:
-    return Path.home() / ".claude" / "hooks"
+def hooks_dir(harness: str = "claude-code") -> Path:
+    if harness == "claude-code":
+        return Path.home() / ".claude" / "hooks"
+    if harness == "codex-cli":
+        return codex_home() / "hooks"
+    raise ValueError(f"unsupported harness: {harness}")
+
+
+def _hooks_dir_for(harness: str) -> Path:
+    return hooks_dir() if harness == "claude-code" else hooks_dir(harness)
 
 
 def wiring_path() -> Path:
     return hooks_dir().parent / "settings.hooks.json"
 
 
-def _state_path() -> Path:
-    return hooks_dir().parent / _STATE_FILENAME
+def _state_path(harness: str = "claude-code") -> Path:
+    return _hooks_dir_for(harness).parent / _STATE_FILENAME
 
 
-def _load_managed() -> set[str]:
+def _load_state(harness: str) -> tuple[set[str], set[str]]:
     try:
-        data = json.loads(_state_path().read_text(encoding="utf-8"))
+        data = json.loads(_state_path(harness).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return set()
-    managed = data.get("managed", []) if isinstance(data, dict) else []
-    return {n for n in managed if isinstance(n, str)}
+        return set(), set()
+    if not isinstance(data, dict):
+        return set(), set()
+
+    def filenames(key: str) -> set[str]:
+        values = data.get(key, [])
+        if not isinstance(values, list):
+            return set()
+        return {
+            value
+            for value in values
+            if isinstance(value, str) and _FILENAME_RE.fullmatch(value)
+        }
+
+    return filenames("managed"), filenames("dropped")
 
 
 def managed_filenames() -> set[str]:
-    """Script filenames the last successful pull installed. `apply-settings`
-    reads this to strip user-file wiring the server has taken over."""
-    return _load_managed()
+    """Claude hook filenames currently owned by the policy layer."""
+    return _load_state("claude-code")[0]
 
 
-def _save_managed(filenames: set[str]) -> None:
-    _state_path().write_text(
-        json.dumps({"managed": sorted(filenames)}, indent=2) + "\n", encoding="utf-8"
-    )
-
-
-def _write_wiring(hooks: dict[str, list[dict[str, Any]]]) -> None:
-    """Write the layer atomically - apply-settings parses it moments later, and
-    a torn write would be a JSON error at exactly the wrong time. Only a `hooks`
-    key is ever emitted: `merge` replaces non-hooks keys wholesale, so anything
-    else here would silently outrank the shipped defaults."""
-    path = wiring_path()
+def _atomic_write(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps({"hooks": hooks}, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    tmp = path.with_name(f".{path.name}.tmp")
+    try:
+        tmp.write_bytes(content)
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _save_state(harness: str, managed: set[str], dropped: set[str]) -> None:
+    content = (
+        json.dumps(
+            {"managed": sorted(managed), "dropped": sorted(dropped)}, indent=2
+        )
+        + "\n"
+    ).encode()
+    _atomic_write(_state_path(harness), content)
+
+
+def _write_claude_wiring(hooks: dict[str, list[dict[str, Any]]]) -> None:
+    content = (json.dumps({"hooks": hooks}, indent=2) + "\n").encode()
+    _atomic_write(wiring_path(), content)
 
 
 def _applies_here(instances: Any) -> bool:
-    """True when this machine is in the hook's instance allowlist. None (or an
-    empty list) means every machine."""
-    if not instances:
-        return True
-    if not isinstance(instances, list):
+    if not instances or not isinstance(instances, list):
         return True
     return os.environ.get("HYDRA_INSTANCE_ID", "").strip() in instances
 
 
-def run_pull() -> int:
-    """Fetch every server hook, write the ones that apply here into
-    ~/.claude/hooks, prune previously-managed scripts the server no longer
-    serves, and render the wiring layer. Returns 0 on success, 1 on a fetch
-    error (non-fatal in the hook, which also appends `|| true`)."""
+def _install_script(
+    path: Path,
+    content: str,
+    runtime: str,
+    owned: set[str],
+    *,
+    adopt: bool,
+) -> str:
+    filename = path.name
+    if path.is_symlink():
+        print(f"refused: {path} (symlink)", file=sys.stderr)
+        return "refused"
+    if path.exists() and not path.is_file():
+        print(f"refused: {path} (not a regular file)", file=sys.stderr)
+        return "refused"
+    try:
+        existing = path.read_bytes()
+    except FileNotFoundError:
+        existing = None
+    except OSError:
+        print(f"refused: {path} (not a regular file)", file=sys.stderr)
+        return "refused"
+    if existing is not None and filename not in owned and not adopt:
+        print(
+            f"refused: {path} (unmanaged; rerun with --adopt to take ownership)",
+            file=sys.stderr,
+        )
+        return "refused"
+    if runtime == "python":
+        try:
+            compile(content, f"<hydra hook {path.stem}>", "exec")
+        except SyntaxError as exc:
+            if existing is not None and filename in owned:
+                print(f"  retained (syntax error): {filename}: {exc}", file=sys.stderr)
+                return "retained"
+            print(f"  refused (syntax error): {filename}: {exc}", file=sys.stderr)
+            return "refused"
+    if existing != content.encode():
+        _atomic_write(path, content.encode())
+    path.chmod(0o755)
+    return "installed"
+
+
+def _command_path(filename: str) -> str:
+    default = (Path.home() / ".codex").absolute()
+    home = codex_home().absolute()
+    if home == default:
+        return f"$HOME/.codex/hooks/{filename}"
+    path = str(home / "hooks" / filename)
+    return path.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
+
+
+def _entry(
+    harness: str, filename: str, interpreter: str, timeout: int
+) -> dict[str, Any]:
+    path = (
+        f"$HOME/.claude/hooks/{filename}"
+        if harness == "claude-code"
+        else _command_path(filename)
+    )
+    return {
+        "type": "command",
+        "command": f'{interpreter} "{path}"',
+        "timeout": timeout,
+    }
+
+
+def _group(spec: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]:
+    group: dict[str, Any] = {"hooks": [entry]}
+    matcher = spec.get("matcher")
+    if isinstance(matcher, str) and matcher:
+        group["matcher"] = matcher
+    return group
+
+
+def _owned_filename(group: Any, known: set[str]) -> str | None:
+    """Return the state-owned filename for a single-entry group."""
+    if not isinstance(group, dict):
+        return None
+    entries = group.get("hooks")
+    if not isinstance(entries, list) or len(entries) != 1:
+        return None
+    entry = entries[0]
+    if not isinstance(entry, dict) or not isinstance(entry.get("command"), str):
+        return None
+    command = entry["command"]
+    for filename in known:
+        if command.endswith(f'"{_command_path(filename)}"'):
+            return filename
+    return None
+
+
+def _updated_codex_config(
+    config: dict[str, Any],
+    expected: dict[str, tuple[str, dict[str, Any]]],
+    known: set[str],
+) -> tuple[dict[str, Any], bool]:
+    updated = copy.deepcopy(config)
+    raw_hooks = updated.get("hooks")
+    if raw_hooks is None:
+        if not expected:
+            return updated, False
+        raw_hooks = {}
+        updated["hooks"] = raw_hooks
+    if not isinstance(raw_hooks, dict):
+        raise ValueError("hooks is not an object")
+
+    remaining = dict(expected)
+    for event in list(raw_hooks):
+        groups = raw_hooks[event]
+        if not isinstance(groups, list):
+            raise ValueError(f"hooks.{event} is not a list")
+        kept = []
+        for group in groups:
+            filename = _owned_filename(group, known)
+            if filename is None:
+                kept.append(group)
+                continue
+            name = filename.rsplit(".", 1)[0]
+            replacement = remaining.pop(name, None)
+            if replacement is not None:
+                new_event, new_group = replacement
+                if new_event == event:
+                    kept.append(new_group)
+                else:
+                    remaining[name] = replacement
+        if kept:
+            raw_hooks[event] = kept
+        else:
+            del raw_hooks[event]
+
+    for _name, (event, group) in remaining.items():
+        groups = raw_hooks.setdefault(event, [])
+        if not isinstance(groups, list):
+            raise ValueError(f"hooks.{event} is not a list")
+        groups.append(group)
+    return updated, updated != config
+
+
+def _read_codex_config() -> tuple[Path, dict[str, Any]]:
+    from hydra_cli.codex import hooks_path
+
+    path = hooks_path()
+    if path.is_symlink():
+        raise ValueError(f"refused symlink: {path}")
+    if not path.exists():
+        return path, {}
+    config = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(config, dict):
+        raise ValueError("top-level value is not an object")
+    return path, config
+
+
+def _write_codex_config(path: Path, config: dict[str, Any]) -> None:
+    from hydra_cli.codex import _write_hooks
+
+    _write_hooks(path, config)
+
+
+def _clear_wiring(harness: str, known: set[str]) -> bool:
+    if harness == "claude-code":
+        _write_claude_wiring({})
+        return True
+    path, config = _read_codex_config()
+    updated, changed = _updated_codex_config(config, {}, known)
+    if changed:
+        _write_codex_config(path, updated)
+    return changed
+
+
+def run_pull(harness: str = "claude-code", *, adopt: bool = False) -> int:
+    """Install and wire every server policy hook for one harness."""
+    if harness not in HARNESSES:
+        raise ValueError(f"unsupported harness: {harness}")
+    previous, previous_dropped = _load_state(harness)
+    known = previous | previous_dropped
+
     if os.environ.get(_DISABLE_ENV, "").strip():
-        _write_wiring({})
-        print(f"  hooks pull: disabled via {_DISABLE_ENV}, wiring layer emptied")
+        try:
+            changed = _clear_wiring(harness, known)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"  hooks pull [{harness}] failed: {exc}", file=sys.stderr)
+            return 1
+        print(f"  hooks pull [{harness}]: disabled via {_DISABLE_ENV}, wiring emptied")
+        if harness == "codex-cli" and changed:
+            print(
+                "  hooks pull [codex-cli]: wiring changed; review trust with "
+                "/hooks (t accepts all)"
+            )
         return 0
 
-    status, body = api.get("/api/config/hooks")
+    status, body = api.get(f"/api/config/hooks/render/{harness}")
     if status != 200:
-        print(f"  hooks pull failed ({status}): {body}", file=sys.stderr)
+        print(f"  hooks pull [{harness}] failed ({status}): {body}", file=sys.stderr)
         return 1
     try:
         served: dict[str, Any] = json.loads(body)
     except json.JSONDecodeError:
-        print("  hooks pull failed: invalid JSON from server", file=sys.stderr)
+        print(f"  hooks pull [{harness}] failed: invalid JSON from server", file=sys.stderr)
         return 1
     if not isinstance(served, dict):
-        print("  hooks pull failed: unexpected payload shape", file=sys.stderr)
+        print(f"  hooks pull [{harness}] failed: unexpected payload shape", file=sys.stderr)
         return 1
 
-    hdir = hooks_dir()
-    hdir.mkdir(parents=True, exist_ok=True)
+    codex_path: Path | None = None
+    codex_config: dict[str, Any] | None = None
+    if harness == "codex-cli":
+        try:
+            codex_path, codex_config = _read_codex_config()
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"  hooks pull [codex-cli] refused hooks file: {exc}", file=sys.stderr)
+            return 1
 
-    written: set[str] = set()
-    retained: set[str] = set()
+    if not served:
+        try:
+            changed = _clear_wiring(harness, known)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"  hooks pull [{harness}] failed: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"  hooks pull [{harness}]: server served 0 hooks, keeping "
+            f"{len(known)} local script(s) - nothing pruned",
+            file=sys.stderr,
+        )
+        if harness == "codex-cli" and changed:
+            print(
+                "  hooks pull [codex-cli]: wiring changed; review trust with "
+                "/hooks (t accepts all)"
+            )
+        return 0
+
+    hdir = _hooks_dir_for(harness)
+    hdir.mkdir(parents=True, exist_ok=True)
+    managed: set[str] = set()
+    refused: set[str] = set()
     wired_runtimes: set[str] = set()
-    wiring: dict[str, list[dict[str, Any]]] = {}
+    claude_wiring: dict[str, list[dict[str, Any]]] = {}
+    codex_expected: dict[str, tuple[str, dict[str, Any]]] = {}
+    counts = {"installed": 0, "retained": 0, "refused": 0}
 
     for name, spec in served.items():
-        if not _NAME_RE.match(name) or not isinstance(spec, dict):
+        if not isinstance(name, str) or not _NAME_RE.fullmatch(name) or not isinstance(spec, dict):
             print(f"  skip (unsafe hook name or payload): {name!r}", file=sys.stderr)
             continue
-        runtime = spec.get("runtime")
-        if runtime not in _RUNTIMES:
-            print(f"  skip (unknown runtime {runtime!r}): {name}", file=sys.stderr)
+        if not spec.get("enabled", True) or not _applies_here(spec.get("instances")):
             continue
+        runtime = spec.get("runtime")
         event = spec.get("event")
         content = spec.get("content")
-        if not isinstance(event, str) or not event or not isinstance(content, str):
+        matcher = spec.get("matcher")
+        timeout = spec.get("timeout")
+        if (
+            runtime not in _RUNTIMES
+            or not isinstance(event, str)
+            or re.fullmatch(r"\S{1,64}", event) is None
+            or not isinstance(content, str)
+            or (matcher is not None and not isinstance(matcher, str))
+            or isinstance(timeout, bool)
+            or not isinstance(timeout, int)
+            or not 1 <= timeout <= 600
+        ):
             print(f"  skip (malformed hook): {name}", file=sys.stderr)
-            continue
-        # A disabled hook, or one scoped to other machines, is not an error -
-        # it just produces no wiring, and its script falls out of the managed
-        # set below so the stale file is pruned.
-        if not spec.get("enabled", True) or not _applies_here(spec.get("instances")):
             continue
 
         suffix, interpreter = _RUNTIMES[runtime]
         filename = f"{name}{suffix}"
-        path = hdir / filename
-
-        installed = True
-        if runtime == "python":
-            try:
-                compile(content, f"<hydra hook {name}>", "exec")
-            except SyntaxError as exc:
-                installed = False
-                print(
-                    f"  skip (syntax error, keeping previous): {filename}: {exc}",
-                    file=sys.stderr,
-                )
-        if installed:
-            path.write_text(content, encoding="utf-8")
-            path.chmod(0o755)
-            written.add(filename)
-        elif path.exists():
-            # Last-good script stays wired. For a fail-open guard, running the
-            # previous version beats running nothing.
-            retained.add(filename)
-
-        # Wire only what is actually on disk. This is what makes the exit-2
-        # blocking failure structurally impossible rather than merely unlikely.
-        if not path.exists():
+        outcome = _install_script(
+            hdir / filename, content, runtime, known, adopt=adopt
+        )
+        counts[outcome] += 1
+        if outcome == "refused":
+            refused.add(filename)
             continue
-        entry: dict[str, Any] = {
-            "type": "command",
-            "command": f'{interpreter} "$HOME/.claude/hooks/{filename}"',
-        }
-        timeout = spec.get("timeout")
-        if isinstance(timeout, int):
-            entry["timeout"] = timeout
-        group: dict[str, Any] = {}
-        matcher = spec.get("matcher")
-        if isinstance(matcher, str) and matcher:
-            group["matcher"] = matcher
-        group["hooks"] = [entry]
-        wiring.setdefault(event, []).append(group)
+        managed.add(filename)
         wired_runtimes.add(runtime)
+        entry = _entry(harness, filename, interpreter, timeout)
+        group = _group(spec, entry)
+        if harness == "claude-code":
+            claude_wiring.setdefault(event, []).append(group)
+        else:
+            codex_expected[name] = (event, group)
 
-    previously = _load_managed()
-    pruned: set[str] = set()
-    if served:
-        # Prune only files this client wrote on a previous pull - never a glob,
-        # so hand-authored hooks in the same directory are untouched.
-        pruned = previously - written - retained
-        for filename in pruned:
+    try:
+        changed = False
+        if harness == "claude-code":
+            _write_claude_wiring(claude_wiring)
+        else:
+            assert codex_path is not None and codex_config is not None
+            updated, changed = _updated_codex_config(
+                codex_config, codex_expected, known
+            )
+            if changed:
+                _write_codex_config(codex_path, updated)
+
+        # Wiring disappears on the first dropped pull. The prior generation is
+        # deleted only now, after old sessions and Claude's render window passed.
+        pruned = previous_dropped - managed - refused
+        for filename in sorted(pruned):
             (hdir / filename).unlink(missing_ok=True)
             print(f"  pruned (server-removed): {filename}")
-        _save_managed(written | retained)
-    elif previously:
-        # An empty server is never authority to delete. A wrong HYDRA_URL, a
-        # fresh DB and a half-restored backup all look exactly like "every hook
-        # was deleted", and the wiring layer is already empty, so the stale
-        # scripts are inert until a real pull confirms them.
-        print(
-            f"  hooks pull: server served 0 hooks, keeping {len(previously)} "
-            "local script(s) - nothing pruned",
-            file=sys.stderr,
-        )
+        dropped = previous - managed - refused
+        _save_state(harness, managed, dropped)
+    except (OSError, ValueError) as exc:
+        print(f"  hooks pull [{harness}] failed: {exc}", file=sys.stderr)
+        return 1
 
-    # A missing interpreter is invisible otherwise - scripts install, wiring
-    # renders, nothing runs. Still wired: it exits 127, not the blocking 2.
     for runtime in sorted(wired_runtimes):
         interpreter = _RUNTIMES[runtime][1]
         if shutil.which(interpreter) is None:
             print(
-                f"  hooks pull: WARNING - {interpreter!r} is not on PATH here, "
-                f"so the {runtime} hooks are wired but will not run",
+                f"  hooks pull [{harness}]: WARNING - {interpreter!r} is not on PATH; "
+                f"the {runtime} hooks are wired but will not run",
                 file=sys.stderr,
             )
 
-    _write_wiring(wiring)
-    wired = sum(len(groups) for groups in wiring.values())
+    wired = len(managed)
     print(
-        f"  hooks pull: {len(written)} written, {len(pruned)} pruned, {wired} wired"
+        f"  hooks pull [{harness}]: {counts['installed']} installed, "
+        f"{counts['retained']} retained, {len(pruned)} pruned, "
+        f"{counts['refused']} refused, {wired} wired"
     )
-    return 0
+    if harness == "codex-cli" and changed:
+        print("  hooks pull [codex-cli]: wiring changed; review trust with /hooks (t accepts all)")
+    return 1 if refused else 0

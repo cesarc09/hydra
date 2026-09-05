@@ -37,20 +37,23 @@ bash client/setup.sh
 
 ## Codex CLI
 
-`setup.sh` runs `setup_codex.sh` after the Claude Code deploy. It returns silently when `codex` is not on `PATH`; otherwise it runs `python -m hydra_cli codex-setup`, which wires two hooks idempotently into `$CODEX_HOME/hooks.json` (default `~/.codex/hooks.json`), rewriting a stale `python -m hydra_cli ...` entry in place instead of appending a second one:
+`setup.sh` runs `setup_codex.sh` after the Claude Code deploy. It returns silently when `codex` is not on `PATH`; otherwise it wires Hydra's hooks idempotently into `$CODEX_HOME/hooks.json` (default `~/.codex/hooks.json`) and pulls the server policy layer:
 
 | Event | Matcher | Command | Timeout |
 |-------|---------|---------|---------|
 | `SessionStart` | `startup\|resume\|clear\|compact` | `python -m hydra_cli codex-session-start` | 20 |
 | `PreToolUse` | `Bash\|apply_patch` | `python -m hydra_cli guard` | 10 |
+| `Stop` | - | `python -m hydra_cli usage sweep` | 10 |
+| `SessionEnd` | - | `python -m hydra_cli usage sweep` | 3 |
+| Server policy | Per harness | `<runtime> "$HOME/.codex/hooks/<file>"` | Per hook |
 
 Codex skips a new or changed hook until it is trusted: open Codex once after setup and run `/hooks`. That is needed again whenever a wired command string changes.
 
-The SessionStart hook pulls the memory mirror and the `codex-cli` skills, then emits `additionalContext`: one header line naming the absolute memory dir, followed by that dir's `MEMORY.md`, truncated to whole lines under 32000 bytes with a count of the lines left out and the path to read. Diagnostics go to stderr, so stdout carries only the hook JSON.
+The SessionStart hook pulls the memory mirror, `codex-cli` skills and policy hooks, then emits `additionalContext`: one header line naming the absolute memory dir, followed by that dir's `MEMORY.md`, truncated to whole lines under 32000 bytes with a count of the lines left out and the path to read. Diagnostics go to stderr, so stdout carries only the hook JSON.
 
-Files land in `$CODEX_HOME/AGENTS.md` (instructions), `~/.agents/skills/<name>/SKILL.md` and `~/.agents/skills/<name>/agents/openai.yaml` (skills), and `~/.claude/.hydra-skills-codex-cli.json` (the state file that scopes prune to files Hydra wrote). `CODEX_HOME` is honoured wherever a Codex path is built. The memory mirror stays under `~/.claude/projects/`, shared with Claude Code.
+Files land in `$CODEX_HOME/AGENTS.md` (instructions), `~/.agents/skills/<name>/` (skills), and `$CODEX_HOME/hooks/` (policy scripts). `$CODEX_HOME/.hydra-hooks.json` scopes policy ownership and prune to files Hydra wrote. `CODEX_HOME` is honoured wherever a Codex path is built. The memory mirror stays under `~/.claude/projects/`, shared with Claude Code.
 
-Both hooks call `python -m hydra_cli`, so the same interpreter rule applies as for the Claude Code hooks - see the client setup note in the root [README](../README.md).
+Hydra's Codex hooks call `python -m hydra_cli`, so the same interpreter rule applies as for the Claude Code hooks - see the client setup note in the root [README](../README.md).
 
 ## How `~/.claude/settings.json` is composed
 
@@ -104,10 +107,12 @@ exception: they rewrite the affected field in place and report it on stderr.
 
 The `SessionStart` hook also pulls and re-renders automatically on every new Claude Code session.
 
-That path is for the Hydra template itself. A **policy hook** no longer needs it:
-`hydra hooks put <name> <file> --event <Event>` publishes the script and its
-wiring together, and every machine installs both at its next SessionStart with
-no `git pull`.
+That path is for the Hydra template itself. A **policy hook** no longer needs it.
+The legacy file form, `hydra hooks put <name> <file> --event <Event>`, publishes
+for Claude Code only. The directory form uses exactly one `hook.py` or `hook.sh`
+plus `claude-code.json` and/or `codex-cli.json` wiring files. Each harness installs
+only its variant on SessionStart. After a new or changed Codex hook lands, run
+`/hooks` and press `t` to trust all pending hooks.
 
 ## Hydra hooks
 
