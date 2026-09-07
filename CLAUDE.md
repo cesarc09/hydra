@@ -179,7 +179,7 @@ schema.sql            - DDL; sessions.archived_at, memories project_slug FK + UN
                         skills + skill_variants,
                         config_commands (server-distributed slash commands),
                         config_hooks (server-distributed policy hooks: script + wiring),
-                        usage_messages (per-API-message token counts, PK message_id)
+                        usage_messages (per-API-message token counts, PK message_id, service_tier)
 ```
 
 ## Key Patterns

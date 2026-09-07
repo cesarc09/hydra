@@ -359,3 +359,72 @@ async def test_days_sort_newest_first(client):
     ])
     body = (await client.get("/api/usage/summary?group_by=day")).json()
     assert [r["key"] for r in body["rows"]] == ["2026-08-09", "2026-08-05", "2026-08-01"]
+
+
+async def test_fast_mode_prices_at_double_and_splits_the_group(client):
+    await _post(client, "s1", [
+        _msg("m1", model="gpt-6-astra", service_tier="default",
+             input_tokens=1_000_000, output_tokens=0,
+             cache_read_tokens=0, cache_write_1h_tokens=0),
+        _msg("m2", model="gpt-6-astra", service_tier="priority",
+             input_tokens=1_000_000, output_tokens=0,
+             cache_read_tokens=0, cache_write_1h_tokens=0),
+    ])
+
+    body = (await client.get("/api/usage/summary?group_by=model")).json()
+    row = next(r for r in body["rows"] if r["key"] == "gpt-6-astra")
+
+    # $10 at base + $20 at fast mode. Summing the counters first would have
+    # priced all 2M tokens at one rate and lost the difference.
+    assert row["cost_usd"] == pytest.approx(30.0)
+
+
+async def test_a_later_sweep_backfills_a_tier_it_did_not_know_before(client):
+    await _post(client, "s1", [
+        _msg("m1", model="gpt-6-astra", input_tokens=1_000_000, output_tokens=0,
+             cache_read_tokens=0, cache_write_1h_tokens=0),
+    ])
+    before = (await client.get("/api/usage/summary")).json()["totals"]["cost_usd"]
+
+    res = await _post(client, "s1", [
+        _msg("m1", model="gpt-6-astra", service_tier="priority",
+             input_tokens=1_000_000, output_tokens=0,
+             cache_read_tokens=0, cache_write_1h_tokens=0),
+    ])
+    after = (await client.get("/api/usage/summary")).json()["totals"]["cost_usd"]
+
+    assert res.json()["inserted"] == 0
+    assert before == pytest.approx(10.0)
+    assert after == pytest.approx(20.0)
+
+
+async def test_backfill_never_revises_a_tier_already_recorded(client):
+    await _post(client, "s1", [
+        _msg("m1", model="gpt-6-astra", service_tier="priority",
+             input_tokens=1_000_000, output_tokens=0,
+             cache_read_tokens=0, cache_write_1h_tokens=0),
+    ])
+    await _post(client, "s1", [
+        _msg("m1", model="gpt-6-astra", service_tier="default",
+             input_tokens=1_000_000, output_tokens=0,
+             cache_read_tokens=0, cache_write_1h_tokens=0),
+    ])
+
+    body = (await client.get("/api/usage/summary")).json()
+    assert body["totals"]["cost_usd"] == pytest.approx(20.0)
+
+
+async def test_backfill_leaves_token_counts_untouched(client):
+    await _post(client, "s1", [
+        _msg("m1", model="gpt-6-astra", input_tokens=1_000_000, output_tokens=0,
+             cache_read_tokens=0, cache_write_1h_tokens=0),
+    ])
+    await _post(client, "s1", [
+        _msg("m1", model="gpt-6-astra", service_tier="priority",
+             input_tokens=999, output_tokens=999,
+             cache_read_tokens=999, cache_write_1h_tokens=999),
+    ])
+
+    body = (await client.get("/api/usage/summary")).json()
+    assert body["totals"]["input_tokens"] == 1_000_000
+    assert body["totals"]["output_tokens"] == 0

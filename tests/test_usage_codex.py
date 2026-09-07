@@ -378,3 +378,77 @@ def test_batches_are_chunked_and_grouped_by_root_session(
             message["message_id"].split(":", 2)[1] in expected_threads
             for message in batch["messages"]
         )
+
+
+def _tier_rollout(tmp_path: Path, thread_id: str, tier: str | None) -> Path:
+    """Rollout whose settings event lands AFTER a priced turn, as Codex writes it."""
+    path = tmp_path / f"rollout-2026-09-05T00-00-00-{thread_id}.jsonl"
+    def usage(n: int) -> dict[str, int]:
+        return {
+            "input_tokens": n,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "total_tokens": n,
+        }
+    records: list[dict[str, object]] = [
+        {
+            "timestamp": "2026-09-05T00:00:00Z",
+            "type": "session_meta",
+            "payload": {"id": thread_id, "session_id": thread_id, "cwd": "/project"},
+        },
+        {
+            "timestamp": "2026-09-05T00:00:01Z",
+            "type": "turn_context",
+            "payload": {"model": "gpt-6-astra", "cwd": "/project"},
+        },
+        {
+            "timestamp": "2026-09-05T00:00:02Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {"total_token_usage": usage(10), "last_token_usage": usage(10)},
+            },
+        },
+    ]
+    if tier is not None:
+        records.append({
+            "timestamp": "2026-09-05T00:00:03Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "thread_settings_applied",
+                "thread_id": thread_id,
+                "thread_settings": {"model": "gpt-6-astra", "service_tier": tier},
+            },
+        })
+    records.append({
+        "timestamp": "2026-09-05T00:00:04Z",
+        "type": "event_msg",
+        "payload": {
+            "type": "token_count",
+            "info": {"total_token_usage": usage(30), "last_token_usage": usage(20)},
+        },
+    })
+    path.write_text("".join(json.dumps(record) + "\n" for record in records))
+    return path
+
+
+def test_tier_applies_to_rows_recorded_before_the_settings_event(tmp_path: Path):
+    # The settings event trails the first turn in real rollouts, but the tier is
+    # constant per file, so the earlier row must be stamped too - not left base.
+    path = _tier_rollout(tmp_path, "77777777-7777-4777-8777-777777777777", "priority")
+
+    parsed = usage_codex.parse_file(str(path))
+
+    assert len(parsed.rows) == 2
+    assert [row["service_tier"] for row in parsed.rows] == ["priority", "priority"]
+
+
+def test_rollout_without_a_settings_event_leaves_the_tier_absent(tmp_path: Path):
+    path = _tier_rollout(tmp_path, "66666666-6666-4666-8666-666666666666", None)
+
+    parsed = usage_codex.parse_file(str(path))
+
+    assert len(parsed.rows) == 2
+    assert all(row["service_tier"] is None for row in parsed.rows)

@@ -112,6 +112,21 @@ async def ingest_usage(
             for m in batch.messages
         ],
     )
+    # A row already ingested keeps its counters (INSERT OR IGNORE), so a later
+    # sweep that learned the thread's tier can only reach it through an UPDATE.
+    # Scoped to service_tier IS NULL: it fills a gap, never revises a tier, and
+    # never touches a token count - row identity and spend stay immutable.
+    backfill = [
+        (m.service_tier, m.message_id)
+        for m in batch.messages
+        if m.message_id in known and m.service_tier
+    ]
+    if backfill:
+        await db.executemany(
+            "UPDATE usage_messages SET service_tier = ?"
+            " WHERE message_id = ? AND service_tier IS NULL",
+            backfill,
+        )
     await db.commit()
 
     inserted = len(ids) - len(known)
@@ -135,10 +150,11 @@ def _blank_row(key: str) -> dict[str, Any]:
 def _fold(
     target: dict[str, Any], src: dict[str, Any], parts: dict[str, float] | None
 ) -> None:
-    """Accumulate one (key, model) bucket into a group row.
+    """Accumulate one (key, model, service_tier) bucket into a group row.
 
-    Cost has to be summed per model, because the rate table is per model - a
-    group that mixes models cannot be priced from its summed counters.
+    Cost has to be summed per model and tier, because the rate table is per
+    model and the tier multiplies it - a group that mixes either cannot be
+    priced from its summed counters.
     """
     target["messages"] += src["messages"]
     for c in _COUNTERS:
@@ -161,10 +177,12 @@ async def usage_summary(
 ):
     """Grouped token totals plus reconstructed cost.
 
-    Rows are aggregated in SQL per (group key, model) and folded in Python, so
-    each model's counters are priced at its own rate before being summed into
-    the group. Messages on a model the rate table doesn't know contribute their
-    tokens but no cost, and are counted in `unpriced_messages`.
+    Rows are aggregated in SQL per (group key, model, service_tier) and folded
+    in Python, so each model's counters are priced at its own rate before being
+    summed into the group. The tier is in the key for the same reason the model
+    is: it scales the bill, so a group mixing tiers cannot be priced from its
+    summed counters. Messages on a model the rate table doesn't know contribute
+    their tokens but no cost, and are counted in `unpriced_messages`.
     """
     db = await get_db()
     key_sql = _GROUP_SQL[group_by]
@@ -187,9 +205,10 @@ async def usage_summary(
 
     sums = ", ".join(f"SUM(u.{c}) AS {c}" for c in _COUNTERS)
     rows = await db.execute_fetchall(
-        f"SELECT {key_sql} AS key, u.model AS model, COUNT(*) AS messages, {sums}"
+        f"SELECT {key_sql} AS key, u.model AS model,"
+        f" u.service_tier AS service_tier, COUNT(*) AS messages, {sums}"
         f" FROM usage_messages u{where_sql}"
-        " GROUP BY key, u.model",
+        " GROUP BY key, u.model, u.service_tier",
         params,
     )
 
@@ -200,6 +219,7 @@ async def usage_summary(
         bucket = dict(row)
         parts = pricing.cost_components(
             bucket["model"],
+            service_tier=bucket["service_tier"],
             input_tokens=bucket["input_tokens"],
             output_tokens=bucket["output_tokens"],
             cache_read_tokens=bucket["cache_read_tokens"],

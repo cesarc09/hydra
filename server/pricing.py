@@ -31,7 +31,8 @@ class Rate(NamedTuple):
 # OpenAI does tier by context - input above 272k bills at 2x input / 1.5x
 # output - so the gpt rows are the short-context column. Measured 2026-09-07:
 # no gpt row in the corpus has ever crossed 272k (astra peak 217,696), and a
-# row that does cross would under-report, not silently zero.
+# row that does cross would under-report, not silently zero. The other tier
+# OpenAI charges on, service tier, IS reachable - see TIER_MULT below.
 RATES: dict[str, Rate] = {
     "claude-fable-5-1": Rate(10.0, 50.0, 0.025),
     "claude-mythos-5-1": Rate(10.0, 50.0, 0.025),
@@ -58,6 +59,25 @@ RATES: dict[str, Rate] = {
 CACHE_WRITE_5M_MULT = 1.25
 CACHE_WRITE_1H_MULT = 2.0
 
+# Service tier scales the whole bill, every column by the same factor - fast
+# mode is exactly 2x base on input, cached input, cache writes and output for
+# all four gpt models, and flex/batch exactly 0.5x. So this is a multiplier
+# over the computed cost rather than a second rate table keyed on (model, tier).
+# OpenAI renamed "priority" to "fast" on 2026-07-30 and accepts both.
+# Absent (NULL) means default: Codex only writes a tier when a thread applies
+# settings, and no tier recorded means nothing moved it off the standard rate.
+# An unrecognised tier is unpriced rather than assumed 1x - silently charging
+# base for a premium tier is the same failure mode as a $0 unknown model.
+TIER_MULT: dict[str, float] = {
+    "default": 1.0,
+    "standard": 1.0,
+    "auto": 1.0,
+    "priority": 2.0,
+    "fast": 2.0,
+    "flex": 0.5,
+    "batch": 0.5,
+}
+
 # Server-side web search is billed per request, not per token.
 WEB_SEARCH_USD_PER_1K = 10.0
 
@@ -83,9 +103,17 @@ def rate_for(model: str) -> Rate | None:
     return RATES.get(normalize_model(model))
 
 
+def tier_mult(service_tier: str | None) -> float | None:
+    """Cost multiplier for a service tier. None means the tier is unpriced."""
+    if service_tier is None or not service_tier.strip():
+        return 1.0
+    return TIER_MULT.get(service_tier.strip().lower())
+
+
 def cost_components(
     model: str,
     *,
+    service_tier: str | None = None,
     input_tokens: int = 0,
     output_tokens: int = 0,
     cache_read_tokens: int = 0,
@@ -102,17 +130,26 @@ def cost_components(
     rate = rate_for(model)
     if rate is None:
         return None
+    mult = tier_mult(service_tier)
+    if mult is None:
+        return None
     return {
-        "input": input_tokens * rate.input / 1_000_000,
-        "output": output_tokens * rate.output / 1_000_000,
-        "cache_read": cache_read_tokens * rate.input * rate.cache_read_mult / 1_000_000,
-        "cache_write_5m": cache_write_5m_tokens * rate.input * CACHE_WRITE_5M_MULT / 1_000_000,
-        "cache_write_1h": cache_write_1h_tokens * rate.input * CACHE_WRITE_1H_MULT / 1_000_000,
-        "web_search": web_search_requests * WEB_SEARCH_USD_PER_1K / 1000,
+        "input": input_tokens * rate.input * mult / 1_000_000,
+        "output": output_tokens * rate.output * mult / 1_000_000,
+        "cache_read": cache_read_tokens * rate.input * rate.cache_read_mult * mult / 1_000_000,
+        "cache_write_5m": (
+            cache_write_5m_tokens * rate.input * CACHE_WRITE_5M_MULT * mult / 1_000_000
+        ),
+        "cache_write_1h": (
+            cache_write_1h_tokens * rate.input * CACHE_WRITE_1H_MULT * mult / 1_000_000
+        ),
+        "web_search": web_search_requests * WEB_SEARCH_USD_PER_1K * mult / 1000,
     }
 
 
-def cost_usd(model: str, **counters: int) -> float | None:
-    """Price one row (or one pre-summed group). None if the model is unknown."""
-    parts = cost_components(model, **counters)
+def cost_usd(
+    model: str, *, service_tier: str | None = None, **counters: int
+) -> float | None:
+    """Price one row (or one pre-summed group). None if model or tier is unknown."""
+    parts = cost_components(model, service_tier=service_tier, **counters)
     return None if parts is None else sum(parts.values())

@@ -157,6 +157,7 @@ def parse_file(
     usage_events = 0
     skipped_without_turn = 0
     long_context_calls = 0
+    service_tier = None
 
     try:
         with open(path, "rb") as handle:
@@ -186,6 +187,14 @@ def parse_file(
                     model = payload.get("model")
                     effort = payload.get("effort")
                     cwd = payload.get("cwd")
+                    continue
+
+                if payload.get("type") == "thread_settings_applied":
+                    settings = payload.get("thread_settings")
+                    if isinstance(settings, dict):
+                        tier = settings.get("service_tier")
+                        if isinstance(tier, str) and tier:
+                            service_tier = tier
                     continue
 
                 if rec.get("type") != "event_msg" or payload.get("type") != "token_count":
@@ -262,6 +271,14 @@ def parse_file(
     except OSError as exc:
         print(f"hydra usage sweep: cannot read {path}: {exc}", file=sys.stderr)
         return ParseResult([], offset, None)
+
+    # `thread_settings_applied` is emitted once the thread applies settings, so
+    # usage rows can precede it (751 of them in the measured corpus). The tier is
+    # constant per rollout - no file in 259 showed two - so the value observed
+    # anywhere in the file is the value for every row in it. Absent stays None,
+    # which prices as default.
+    for row in rows:
+        row["service_tier"] = service_tier
 
     return ParseResult(
         rows,

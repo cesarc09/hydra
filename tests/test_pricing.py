@@ -51,3 +51,43 @@ def test_astra_prices_at_short_context_rates():
     assert parts["input"] == pytest.approx(10.0)
     assert parts["output"] == pytest.approx(50.0)
     assert parts["cache_read"] == pytest.approx(1.0)
+
+
+def test_fast_mode_doubles_every_component():
+    base = dict(
+        input_tokens=1_000_000,
+        output_tokens=1_000_000,
+        cache_read_tokens=1_000_000,
+        cache_write_5m_tokens=1_000_000,
+    )
+    std = pricing.cost_components("gpt-6-astra", service_tier="default", **base)
+    fast = pricing.cost_components("gpt-6-astra", service_tier="priority", **base)
+
+    assert std is not None and fast is not None
+    for part, value in std.items():
+        assert fast[part] == pytest.approx(value * 2)
+
+
+def test_priority_and_fast_are_the_same_tier():
+    # OpenAI renamed priority -> fast on 2026-07-30 and accepts both spellings.
+    assert pricing.tier_mult("priority") == pricing.tier_mult("fast") == 2.0
+
+
+def test_absent_tier_prices_as_default():
+    # Codex only records a tier when a thread applies settings; no record means
+    # nothing moved the thread off the standard rate.
+    assert pricing.tier_mult(None) == 1.0
+    assert pricing.tier_mult("") == 1.0
+    assert pricing.tier_mult("default") == 1.0
+    assert pricing.tier_mult("standard") == 1.0
+
+
+def test_unknown_tier_is_unpriced_not_assumed_base():
+    assert pricing.tier_mult("scale") is None
+    assert pricing.cost_components(
+        "gpt-6-astra", service_tier="scale", input_tokens=1_000_000
+    ) is None
+
+
+def test_tier_is_case_and_space_insensitive():
+    assert pricing.tier_mult(" Priority ") == 2.0
