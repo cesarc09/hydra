@@ -37,3 +37,17 @@ def test_unknown_model_stays_unpriced():
 def test_model_suffix_normalisation_is_unchanged():
     assert pricing.rate_for("claude-fable-5-1[1m]") == pricing.RATES["claude-fable-5-1"]
     assert pricing.rate_for("claude-haiku-4-5-20251001") == pricing.RATES["claude-haiku-4-5"]
+
+
+def test_astra_prices_at_short_context_rates():
+    parts = pricing.cost_components(
+        "gpt-6-astra",
+        input_tokens=1_000_000,
+        output_tokens=1_000_000,
+        cache_read_tokens=1_000_000,
+    )
+
+    assert parts is not None
+    assert parts["input"] == pytest.approx(10.0)
+    assert parts["output"] == pytest.approx(50.0)
+    assert parts["cache_read"] == pytest.approx(1.0)

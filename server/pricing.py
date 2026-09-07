@@ -28,6 +28,10 @@ class Rate(NamedTuple):
 # Only rates we can actually cite live here; anything else is deliberately
 # unpriced rather than guessed. Current Claude models serve their 1M context
 # at these standard rates, so the `[1m]` suffix needs no dimension of its own.
+# OpenAI does tier by context - input above 272k bills at 2x input / 1.5x
+# output - so the gpt rows are the short-context column. Measured 2026-09-07:
+# no gpt row in the corpus has ever crossed 272k (astra peak 217,696), and a
+# row that does cross would under-report, not silently zero.
 RATES: dict[str, Rate] = {
     "claude-fable-5-1": Rate(10.0, 50.0, 0.025),
     "claude-mythos-5-1": Rate(10.0, 50.0, 0.025),
@@ -42,7 +46,9 @@ RATES: dict[str, Rate] = {
     "claude-sonnet-4-6": Rate(3.0, 15.0),
     "claude-sonnet-4-5": Rate(3.0, 15.0),
     "claude-haiku-4-5": Rate(1.0, 5.0),
-    # Promotional - available at least through November 21, 2026. Re-verify after.
+    "gpt-6-astra": Rate(10.0, 50.0),
+    # Sol alone is promotional - at least through November 21, 2026. Re-verify
+    # after; terra and luna are standard rates and carry no end date.
     "gpt-5.6-sol": Rate(4.0, 20.0),
     "gpt-5.6-terra": Rate(2.0, 12.0),
     "gpt-5.6-luna": Rate(0.2, 1.2),
