@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 from hydra_cli import usage_codex
 
+from server.models import UsageBatch
+
 FIXTURES = Path(__file__).parent / "fixtures"
 PARENT = "11111111-1111-4111-8111-111111111111"
 GUARDIAN = "22222222-2222-4222-8222-222222222222"
@@ -65,6 +67,14 @@ def _record_rollout(thread_id: str, session_id: str, count: int) -> str:
             "reasoning_output_tokens": 0,
             "total_tokens": i,
         }
+        last = {
+            "input_tokens": 1,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 1,
+        }
         records.append(
             {
                 "timestamp": f"2026-02-01T00:{i // 60:02d}:{i % 60:02d}Z",
@@ -73,7 +83,7 @@ def _record_rollout(thread_id: str, session_id: str, count: int) -> str:
                     "type": "token_count",
                     "info": {
                         "total_token_usage": usage,
-                        "last_token_usage": usage,
+                        "last_token_usage": last,
                         "model_context_window": 258400,
                     },
                 },
@@ -137,6 +147,30 @@ def test_resume_rebuilds_context_but_emits_only_rows_after_offset():
         row["message_id"] for row in cold.rows[1:]
     ]
     assert resumed.offset == cold.offset
+
+
+def test_resume_reset_uses_last_snapshot_then_continues_differencing():
+    parsed = usage_codex.parse_file(str(_fixture("resume_reset")))
+
+    assert [row["input_tokens"] for row in parsed.rows] == [6125, 373, 216]
+    assert [row["cache_read_tokens"] for row in parsed.rows] == [11136, 17024, 17280]
+    assert [row["output_tokens"] for row in parsed.rows] == [9, 78, 22]
+    assert len({row["message_id"] for row in parsed.rows}) == 3
+    assert all(row["service_tier"] == "priority" for row in parsed.rows)
+    UsageBatch.model_validate({"session_id": parsed.session_id, "messages": parsed.rows})
+
+
+def test_resume_reset_offset_replay_emits_only_post_reset_usage():
+    path = _fixture("resume_reset")
+    lines = path.read_bytes().splitlines(keepends=True)
+    offset = sum(len(line) for line in lines[:4])
+
+    resumed = usage_codex.parse_file(str(path), offset)
+
+    assert [row["input_tokens"] for row in resumed.rows] == [373, 216]
+    assert [row["output_tokens"] for row in resumed.rows] == [78, 22]
+    assert len({row["message_id"] for row in resumed.rows}) == 2
+    assert resumed.offset == path.stat().st_size
 
 
 def test_guardian_inherits_parent_model_and_falls_back_without_parent():
@@ -239,7 +273,7 @@ def test_corpus_canary_uses_independent_literal_denominator():
         path.read_bytes().count(b'"type":"token_count"') for path in fixtures
     )
     parser_events = sum(usage_codex.parse_file(str(path)).usage_events for path in fixtures)
-    assert parser_events == literal_events == 7
+    assert parser_events == literal_events == 12
 
     parent = usage_codex.parse_file(str(_fixture("parent"))).rows
     billed_tokens = sum(

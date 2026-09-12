@@ -207,7 +207,12 @@ def parse_file(
                 last = _usage(info.get("last_token_usage"))
                 if previous is None:
                     delta = cumulative
-                elif any(cumulative[key] < previous[key] for key in _USAGE_KEYS):
+                elif cumulative != previous and (
+                    cumulative == last
+                    or any(cumulative[key] < previous[key] for key in _USAGE_KEYS)
+                ):
+                    # A resumed counter starts at the latest call, even if it
+                    # exceeds the old total. Unchanged snapshots remain duplicates.
                     delta = last
                 else:
                     delta = {
