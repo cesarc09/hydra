@@ -39,6 +39,7 @@ class ParseResult:
     usage_events: int = 0
     skipped_without_turn: int = 0
     long_context_calls: int = 0
+    ambiguous_first_usage: int = 0
 
 
 def _state_path() -> Path:
@@ -157,6 +158,7 @@ def parse_file(
     usage_events = 0
     skipped_without_turn = 0
     long_context_calls = 0
+    ambiguous_first_usage = 0
     service_tier = None
 
     try:
@@ -204,9 +206,15 @@ def parse_file(
                 if not isinstance(info, dict):
                     continue
                 cumulative = _usage(info.get("total_token_usage"))
-                last = _usage(info.get("last_token_usage"))
+                raw_last = info.get("last_token_usage")
+                last = _usage(raw_last)
                 if previous is None:
-                    delta = cumulative
+                    previous = cumulative
+                    if not isinstance(raw_last, dict):
+                        if record_start >= emit_from:
+                            ambiguous_first_usage += 1
+                        continue
+                    delta = last
                 elif cumulative != previous and (
                     cumulative == last
                     or any(cumulative[key] < previous[key] for key in _USAGE_KEYS)
@@ -292,6 +300,7 @@ def parse_file(
         usage_events,
         skipped_without_turn,
         long_context_calls,
+        ambiguous_first_usage,
     )
 
 
@@ -328,6 +337,7 @@ def run_sweep(root: str | None = None, *, reset: bool = False) -> int:
     no_usage = 0
     skipped_without_turn = 0
     long_context_calls = 0
+    ambiguous_first_usage = 0
 
     for path in paths:
         path_str = str(path)
@@ -346,6 +356,7 @@ def run_sweep(root: str | None = None, *, reset: bool = False) -> int:
         no_usage += result.usage_events == 0
         skipped_without_turn += result.skipped_without_turn
         long_context_calls += result.long_context_calls
+        ambiguous_first_usage += result.ambiguous_first_usage
         if result.session_id and result.rows:
             batches.setdefault(result.session_id, []).extend(result.rows)
 
@@ -375,7 +386,8 @@ def run_sweep(root: str | None = None, *, reset: bool = False) -> int:
         f"hydra usage sweep: {rows} rows from {scanned} changed files;"
         f" {no_usage} files with no usage events;"
         f" {skipped_without_turn} events before turn context;"
-        f" {long_context_calls} long-context calls",
+        f" {long_context_calls} long-context calls;"
+        f" {ambiguous_first_usage} ambiguous first usage events",
         file=sys.stderr,
     )
     return 0

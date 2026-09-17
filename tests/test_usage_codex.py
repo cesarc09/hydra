@@ -92,6 +92,67 @@ def _record_rollout(thread_id: str, session_id: str, count: int) -> str:
     return "".join(json.dumps(record) + "\n" for record in records)
 
 
+def _inherited_usage_rollout(
+    path: Path, *, first_last: dict[str, int] | None
+) -> None:
+    def usage(
+        input_tokens: int, cached_input_tokens: int, output_tokens: int, total_tokens: int
+    ) -> dict[str, int]:
+        return {
+            "input_tokens": input_tokens,
+            "cached_input_tokens": cached_input_tokens,
+            "cache_write_input_tokens": 0,
+            "output_tokens": output_tokens,
+            "reasoning_output_tokens": 0,
+            "total_tokens": total_tokens,
+        }
+
+    first_info = {
+        "total_token_usage": usage(100, 40, 10, 110),
+        "model_context_window": 258400,
+    }
+    if first_last is not None:
+        first_info["last_token_usage"] = first_last
+    records = [
+        {
+            "timestamp": "2026-02-01T00:00:00Z",
+            "type": "session_meta",
+            "payload": {
+                "id": SPAWN,
+                "session_id": PARENT,
+                "parent_thread_id": PARENT,
+                "source": {"subagent": {"thread_spawn": {"parent": PARENT}}},
+                "cwd": "/project",
+            },
+        },
+        {
+            "timestamp": "2026-02-01T00:00:01Z",
+            "type": "turn_context",
+            "payload": {"model": "gpt-5.6-sol", "effort": "high", "cwd": "/project"},
+        },
+        {
+            "timestamp": "2026-02-01T00:00:02Z",
+            "type": "event_msg",
+            "payload": {"type": "token_count", "info": first_info},
+        },
+        {
+            "timestamp": "2026-02-01T00:00:03Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": usage(107, 42, 13, 120),
+                    "last_token_usage": usage(3, 1, 1, 4),
+                    "model_context_window": 258400,
+                },
+            },
+        },
+    ]
+    path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+    )
+
+
 class FakeApi:
     def __init__(self, *, handshake: int = 200, posts: list[int] | None = None):
         self.handshake = handshake
@@ -198,6 +259,76 @@ def test_child_types_and_second_session_meta(name: str, agent_type: str, thread_
     assert parsed.rows[0]["is_subagent"] is True
     assert parsed.rows[0]["agent_type"] == agent_type
     assert parsed.rows[0]["message_id"].startswith(f"codex:{thread_id}:")
+
+
+@pytest.mark.parametrize(
+    "first_last,expected",
+    [
+        (
+            {
+                "input_tokens": 4,
+                "cached_input_tokens": 1,
+                "cache_write_input_tokens": 0,
+                "output_tokens": 2,
+                "reasoning_output_tokens": 0,
+                "total_tokens": 6,
+            },
+            [(3, 1, 2), (5, 2, 3)],
+        ),
+        (
+            {
+                "input_tokens": 0,
+                "cached_input_tokens": 0,
+                "cache_write_input_tokens": 0,
+                "output_tokens": 0,
+                "reasoning_output_tokens": 0,
+                "total_tokens": 0,
+            },
+            [(5, 2, 3)],
+        ),
+    ],
+)
+def test_spawn_first_snapshot_uses_only_last_call(
+    tmp_path: Path,
+    first_last: dict[str, int],
+    expected: list[tuple[int, int, int]],
+):
+    path = tmp_path / f"rollout-2026-02-01T00-00-00-{SPAWN}.jsonl"
+    _inherited_usage_rollout(path, first_last=first_last)
+
+    parsed = usage_codex.parse_file(str(path))
+
+    assert [
+        (row["input_tokens"], row["cache_read_tokens"], row["output_tokens"])
+        for row in parsed.rows
+    ] == expected
+    assert all(row["agent_type"] == "spawn" for row in parsed.rows)
+    assert parsed.ambiguous_first_usage == 0
+
+
+def test_missing_first_last_usage_sets_baseline_and_reports_ambiguity(
+    sweep_env, capsys
+):
+    root, _state, fake = sweep_env
+    root.mkdir()
+    path = root / f"rollout-2026-02-01T00-00-00-{SPAWN}.jsonl"
+    _inherited_usage_rollout(path, first_last=None)
+
+    parsed = usage_codex.parse_file(str(path))
+    assert len(parsed.rows) == 1
+    assert parsed.rows[0]["input_tokens"] == 5
+    assert parsed.rows[0]["cache_read_tokens"] == 2
+    assert parsed.rows[0]["output_tokens"] == 3
+    assert parsed.ambiguous_first_usage == 1
+
+    assert usage_codex.run_sweep(str(root)) == 0
+    assert sum(len(batch["messages"]) for batch in fake.batches) == 1
+    assert "1 ambiguous first usage events" in capsys.readouterr().err
+
+    fake.batches.clear()
+    assert usage_codex.run_sweep(str(root)) == 0
+    assert fake.batches == []
+    assert "0 ambiguous first usage events" in capsys.readouterr().err
 
 
 def test_turnless_exec_fixture_has_no_usage():
