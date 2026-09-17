@@ -61,6 +61,7 @@ server/
                         (globally unique; 409 on cross-scope name without rescope)
     projects.py       - CRUD /api/projects + auto-register + confirm endpoints
     usage.py          - POST /api/usage/messages (INSERT OR IGNORE on message_id),
+                        POST /api/usage/reconcile/codex (preview or owned-row repair),
                         GET /api/usage/summary?group_by=day|model|project|instance|agent
                         (+ since / until / instance filters)
   pricing.py          - Per-model rate table; prices grouped rows at QUERY time.
@@ -97,8 +98,8 @@ client/
                               default; reports slug twins as merge candidates, never merges
     usage.py               - Stop/SessionEnd entry: parses transcript usage, per-session
                               byte offsets in ~/.claude/.hydra-usage/, `usage backfill`
-    usage_codex.py         - Codex rollout parser + sweep, shared atomic offset state,
-                              root-session batching and server capability handshake
+    usage_codex.py         - Codex rollout parser + sweep/reconcile, shared atomic offset
+                              state, root-session batching and server capability handshake
     remote.py              - Stop-hook entry: scans transcript for the bridge record, PUTs URL
     apply_settings.py      - 4-way merge for ~/.claude/settings.json (hydra hooks →
                               server policy hooks → template defaults → user overrides)
@@ -171,7 +172,7 @@ tests/
   test_usage.py       - /api/usage ingest idempotence (replay, cross-session id, no FK)
                         + harness grouping/filter, per-model pricing, unpriced models
   test_usage_codex.py - Codex cumulative parser, parent-model inheritance, sweep state,
-                        handshake, batching and redacted rollout corpus canary
+                        reconciliation, batching and redacted rollout corpus canary
   test_usage_report.py - `usage report`: record→message dedupe, subagent discovery,
                         symlinked workflow dirs, offsets (failure, partial line, truncation)
 schema.sql            - DDL; sessions.archived_at, memories project_slug FK + UNIQUE(name)
@@ -208,7 +209,7 @@ schema.sql            - DDL; sessions.archived_at, memories project_slug FK + UN
   - **Codex ownership comes only from the state file.** A group is owned when it has one command entry referencing a managed or just-dropped filename. Owned groups retain their list slot; new ones append and removed ones disappear. Hydra `_HOOKS`, multi-entry groups and commands for unrecorded filenames remain structurally unchanged. A removal shifts later groups and costs one `t` in `/hooks` per machine to re-trust them. `_wire_event` never touches policy groups because their commands do not carry the `python -m hydra_cli` prefix.
   - **`HYDRA_POLICY_HOOKS_DISABLE` empties the wiring layer and nothing else.** Hydra's telemetry `http` hooks and the `sync` / `commands pull` / `capture-remote-url` lines live in `client/settings.json`, a layer the puller never writes, so observability survives a machine switching its policy hooks off. Claude Code's own `disableAllHooks` is the wider blast radius when nothing may run. Codex removes only state-owned policy groups; scripts and ownership state remain for re-enable.
   - **Hook sources live outside this repo**, like private slash commands - Hydra ships the mechanism and no `client/hooks/` content, seeded with `hydra hooks put`.
-- **Token usage: stable row identity is the correctness boundary; offsets are only an optimisation.** `usage_messages.message_id` is the PK and ingest is `INSERT OR IGNORE`, which makes Stop-hook retries, `usage backfill` re-runs, Codex sweeps and resumed sessions safe. Claude rows use `message.id`; Codex rows use a deterministic content key. The client's byte offsets only decide what is *sent* and may be lost or stale without corrupting anything. Traps that shaped this, all measured on a 719-file / 41k-record Claude corpus:
+- **Token usage: stable row identity is the correctness boundary; offsets are only an optimisation.** `usage_messages.message_id` is the PK and ordinary ingest is `INSERT OR IGNORE`, which makes Stop-hook retries, `usage backfill` re-runs, Codex sweeps and resumed sessions safe. Claude rows use `message.id`; Codex rows use a deterministic content key. The client's byte offsets only decide what is *sent* and may be lost or stale without corrupting anything. `usage reconcile codex` is the explicit exception: it reparses from byte zero, previews every chunk, and only `--apply` replaces parser-derived fields on same-instance Codex rows while preserving provenance and sweep state. Traps that shaped this, all measured on a 719-file / 41k-record Claude corpus:
   - **One API message writes N assistant records, each repeating the same usage** (41,036 records → 17,726 messages; 2.55x output inflation on one session). Dedupe on `message.id`, first seen wins.
   - **Subagent usage is not in the main transcript** - it lives in `<dir>/<session_id>/subagents/**`, self-describing via `attributionAgent`. `transcript_files()` uses `rglob`, which does **not** follow symlinks, and that is deliberate: Claude Code aliases a workflow's subagent dir into sessions that consume it (`A/…/wf_x -> B/…/wf_x`), and following the link would attribute one workflow's agents to whichever session scanned first. Every real file is reachable without symlinks, so nothing is lost.
   - **`message.id` repeats across transcript files** after a resume or fork (124 shared ids between two real sessions) - per-session dedupe is not enough, hence the global PK.

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from hydra_cli import usage_codex
+from hydra_cli.__main__ import build_parser
 
 from server.models import UsageBatch
 
@@ -617,3 +618,227 @@ def test_rollout_without_a_settings_event_leaves_the_tier_absent(tmp_path: Path)
 
     assert len(parsed.rows) == 2
     assert all(row["service_tier"] is None for row in parsed.rows)
+
+
+class ReconcileApi:
+    def __init__(
+        self,
+        *,
+        conflict=False,
+        fail_apply_chunk: int | None = None,
+        apply_conflict_chunk: int | None = None,
+    ):
+        self.conflict = conflict
+        self.fail_apply_chunk = fail_apply_chunk
+        self.apply_conflict_chunk = apply_conflict_chunk
+        self.posts: list[dict] = []
+        self.apply_calls = 0
+
+    def post(self, path: str, payload: dict) -> tuple[int, str]:
+        assert path == "/api/usage/reconcile/codex"
+        self.posts.append(payload)
+        if payload["apply"]:
+            self.apply_calls += 1
+            if self.fail_apply_chunk == self.apply_calls:
+                return 500, "failed"
+        preview_conflict = self.conflict and not payload["apply"] and len(self.posts) == 1
+        apply_conflict = payload["apply"] and self.apply_conflict_chunk == self.apply_calls
+        conflicts = int(preview_conflict or apply_conflict)
+        body = {
+            "inserted": len(payload["messages"]) - conflicts,
+            "updated": 0,
+            "unchanged": 0,
+            "foreign_unchanged": 0,
+            "conflicts": conflicts,
+            "conflict_ids": [],
+            "applied": payload["apply"] and not conflicts,
+        }
+        return 200, json.dumps(body)
+
+
+def test_reconcile_parser_cli_shape():
+    args = build_parser().parse_args(
+        ["usage", "reconcile", "codex", "--root", "rollouts", "--apply"]
+    )
+
+    assert args.group == "usage"
+    assert args.command == "reconcile"
+    assert args.reconcile_harness == "codex"
+    assert args.root == "rollouts"
+    assert args.apply is True
+
+
+def test_reconcile_dry_run_parses_from_zero_and_preserves_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    root = tmp_path / "sessions"
+    _install(root, "parent", PARENT)
+    state = tmp_path / "state"
+    state.mkdir()
+    state_path = state / "codex-sweep.json"
+    state_path.write_bytes(b'{"old": 3}\n')
+    before = state_path.read_bytes()
+    fake = ReconcileApi()
+    original_parse = usage_codex.parse_file
+    calls: list[tuple[int, dict[str, Path] | None]] = []
+
+    def recording_parse(path, offset=0, *, thread_paths=None):
+        calls.append((offset, thread_paths))
+        return original_parse(path, offset, thread_paths=thread_paths)
+
+    monkeypatch.setattr(usage_codex, "state_dir", lambda: state)
+    monkeypatch.setattr(
+        usage_codex,
+        "_load_offsets",
+        lambda: (_ for _ in ()).throw(AssertionError("reconcile loaded sweep offsets")),
+    )
+    monkeypatch.setattr(
+        usage_codex,
+        "_save_offsets",
+        lambda _offsets: (_ for _ in ()).throw(AssertionError("reconcile saved sweep offsets")),
+    )
+    monkeypatch.setattr(usage_codex, "parse_file", recording_parse)
+    monkeypatch.setattr(usage_codex.api, "post", fake.post)
+
+    assert usage_codex.run_reconcile(str(root)) == 0
+    assert calls and all(offset == 0 for offset, _paths in calls)
+    assert all(paths and PARENT in paths for _offset, paths in calls)
+    assert fake.posts and all(post["apply"] is False for post in fake.posts)
+    assert all(message["session_id"] == PARENT for message in fake.posts[0]["messages"])
+    assert state_path.read_bytes() == before
+
+
+def test_reconcile_apply_previews_every_chunk_before_applying(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    root = tmp_path / "sessions"
+    root.mkdir()
+    thread_id = "66666666-6666-4666-8666-666666666666"
+    (root / f"rollout-2026-02-01T00-00-00-{thread_id}.jsonl").write_text(
+        _record_rollout(thread_id, thread_id, 501), encoding="utf-8"
+    )
+    fake = ReconcileApi()
+    monkeypatch.setattr(usage_codex.api, "post", fake.post)
+
+    assert usage_codex.run_reconcile(str(root), apply=True) == 0
+    assert [post["apply"] for post in fake.posts] == [False, False, True, True]
+    assert [len(post["messages"]) for post in fake.posts] == [500, 1, 500, 1]
+
+
+def test_reconcile_conflict_aborts_after_complete_preview(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    root = tmp_path / "sessions"
+    root.mkdir()
+    thread_id = "66666666-6666-4666-8666-666666666666"
+    (root / f"rollout-2026-02-01T00-00-00-{thread_id}.jsonl").write_text(
+        _record_rollout(thread_id, thread_id, 501), encoding="utf-8"
+    )
+    fake = ReconcileApi(conflict=True)
+    monkeypatch.setattr(usage_codex.api, "post", fake.post)
+
+    assert usage_codex.run_reconcile(str(root), apply=True) == 1
+    assert [post["apply"] for post in fake.posts] == [False, False]
+
+
+def test_reconcile_rejects_divergent_duplicate_ids_before_post(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    root = tmp_path / "sessions"
+    root.mkdir()
+    ids = [
+        "66666666-6666-4666-8666-666666666666",
+        "77777777-7777-4777-8777-777777777777",
+    ]
+    paths = [root / f"rollout-2026-02-01T00-00-00-{thread_id}.jsonl" for thread_id in ids]
+    for path in paths:
+        path.write_text("{}\n", encoding="utf-8")
+
+    def duplicate_parse(path, offset=0, *, thread_paths=None):
+        del offset, thread_paths
+        value = 1 if Path(path) == paths[0] else 2
+        return usage_codex.ParseResult(
+            [{"message_id": "codex:duplicate", "input_tokens": value}],
+            Path(path).stat().st_size,
+            "root",
+        )
+
+    posts = []
+    monkeypatch.setattr(usage_codex, "parse_file", duplicate_parse)
+    monkeypatch.setattr(usage_codex.api, "post", lambda path, payload: posts.append(payload))
+
+    assert usage_codex.run_reconcile(str(root)) == 1
+    assert posts == []
+
+
+def test_reconcile_fails_closed_when_rollout_disappears(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    root = tmp_path / "sessions"
+    path = _install(root, "parent", PARENT)
+    posts = []
+
+    def disappearing_parse(path_str, offset=0, *, thread_paths=None):
+        del offset, thread_paths
+        path.unlink()
+        return usage_codex.ParseResult([], 0, PARENT)
+
+    monkeypatch.setattr(usage_codex, "parse_file", disappearing_parse)
+    monkeypatch.setattr(usage_codex.api, "post", lambda path, payload: posts.append(payload))
+
+    assert usage_codex.run_reconcile(str(root), apply=True) == 1
+    assert posts == []
+
+
+def test_reconcile_reports_partial_apply_on_later_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+):
+    root = tmp_path / "sessions"
+    root.mkdir()
+    thread_id = "66666666-6666-4666-8666-666666666666"
+    (root / f"rollout-2026-02-01T00-00-00-{thread_id}.jsonl").write_text(
+        _record_rollout(thread_id, thread_id, 501), encoding="utf-8"
+    )
+    fake = ReconcileApi(fail_apply_chunk=2)
+    monkeypatch.setattr(usage_codex.api, "post", fake.post)
+
+    assert usage_codex.run_reconcile(str(root), apply=True) == 1
+    assert "partial apply" in capsys.readouterr().err
+    assert [post["apply"] for post in fake.posts] == [False, False, True, True]
+
+
+def test_reconcile_apply_conflict_excludes_rolled_back_chunk_totals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+):
+    root = tmp_path / "sessions"
+    root.mkdir()
+    thread_id = "66666666-6666-4666-8666-666666666666"
+    (root / f"rollout-2026-02-01T00-00-00-{thread_id}.jsonl").write_text(
+        _record_rollout(thread_id, thread_id, 502), encoding="utf-8"
+    )
+    fake = ReconcileApi(apply_conflict_chunk=2)
+    monkeypatch.setattr(usage_codex.api, "post", fake.post)
+
+    assert usage_codex.run_reconcile(str(root), apply=True) == 1
+    captured = capsys.readouterr()
+    assert "inserted 500" in captured.out
+    assert "conflicts 1 (partial apply)" in captured.out
+    assert "inserted 501" not in captured.out
+    assert "(applied)" not in captured.out
+    assert "partial apply" in captured.err
+    assert [post["apply"] for post in fake.posts] == [False, False, True, True]
+
+
+def test_reconcile_transport_failure_returns_nonzero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+):
+    root = tmp_path / "sessions"
+    _install(root, "parent", PARENT)
+
+    def fail_post(_path, _payload):
+        raise OSError("offline")
+
+    monkeypatch.setattr(usage_codex.api, "post", fail_post)
+
+    assert usage_codex.run_reconcile(str(root)) == 1
+    assert "POST failed: offline" in capsys.readouterr().err

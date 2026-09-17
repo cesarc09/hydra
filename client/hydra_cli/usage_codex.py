@@ -393,5 +393,218 @@ def run_sweep(root: str | None = None, *, reset: bool = False) -> int:
     return 0
 
 
+_RECONCILE_TOTALS = (
+    "inserted",
+    "updated",
+    "unchanged",
+    "foreign_unchanged",
+    "conflicts",
+)
+
+
+def _empty_reconcile_totals() -> dict[str, int]:
+    return {key: 0 for key in _RECONCILE_TOTALS}
+
+
+def _print_reconcile_totals(totals: dict[str, int], phase: str) -> None:
+    print(
+        "hydra usage reconcile codex:"
+        f" inserted {totals['inserted']};"
+        f" updated {totals['updated']};"
+        f" unchanged {totals['unchanged']};"
+        f" foreign-unchanged {totals['foreign_unchanged']};"
+        f" conflicts {totals['conflicts']} ({phase})"
+    )
+
+
+def _reconcile_request(
+    messages: list[dict[str, Any]], *, apply: bool
+) -> dict[str, int] | None:
+    try:
+        status, body = api.post(
+            "/api/usage/reconcile/codex",
+            {"apply": apply, "messages": messages},
+        )
+    except OSError as exc:
+        print(
+            f"hydra usage reconcile codex: POST failed: {exc}",
+            file=sys.stderr,
+        )
+        return None
+    if status != 200:
+        print(
+            f"hydra usage reconcile codex: POST failed ({status}): {body}",
+            file=sys.stderr,
+        )
+        return None
+    try:
+        response = json.loads(body)
+        totals = {key: response[key] for key in _RECONCILE_TOTALS}
+    except (json.JSONDecodeError, KeyError, TypeError):
+        print(
+            "hydra usage reconcile codex: malformed server response",
+            file=sys.stderr,
+        )
+        return None
+    if any(not isinstance(value, int) or value < 0 for value in totals.values()):
+        print(
+            "hydra usage reconcile codex: malformed server totals",
+            file=sys.stderr,
+        )
+        return None
+    return totals
+
+
+def _reconcile_pass(
+    chunks: list[list[dict[str, Any]]], *, apply: bool
+) -> tuple[dict[str, int], bool]:
+    totals = _empty_reconcile_totals()
+    failed = False
+    for chunk in chunks:
+        response = _reconcile_request(chunk, apply=apply)
+        if response is None:
+            failed = True
+            continue
+        for key in _RECONCILE_TOTALS:
+            totals[key] += response[key]
+    return totals, failed
+
+
+def _collect_reconcile_messages(base: Path) -> list[dict[str, Any]] | None:
+    try:
+        paths = sorted(base.rglob("rollout-*.jsonl"))
+        thread_paths = {
+            thread_id: path
+            for path in paths
+            if (thread_id := _thread_id(path)) is not None
+        }
+    except OSError as exc:
+        print(f"hydra usage reconcile codex: cannot enumerate {base}: {exc}", file=sys.stderr)
+        return None
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    snapshots: dict[Path, tuple[int, int]] = {}
+    for path in paths:
+        try:
+            before = path.stat()
+        except OSError as exc:
+            print(f"hydra usage reconcile codex: cannot stat {path}: {exc}", file=sys.stderr)
+            return None
+        result = parse_file(str(path), 0, thread_paths=thread_paths)
+        try:
+            after = path.stat()
+        except OSError as exc:
+            print(
+                f"hydra usage reconcile codex: rollout disappeared {path}: {exc}",
+                file=sys.stderr,
+            )
+            return None
+        if (
+            result.session_id is None
+            or result.offset != before.st_size
+            or (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns)
+        ):
+            print(
+                f"hydra usage reconcile codex: rollout could not be read completely: {path}",
+                file=sys.stderr,
+            )
+            return None
+        snapshots[path] = (before.st_size, before.st_mtime_ns)
+        if result.rows:
+            grouped.setdefault(result.session_id, []).extend(result.rows)
+
+    try:
+        final_paths = sorted(base.rglob("rollout-*.jsonl"))
+        stable = final_paths == paths and all(
+            (stat.st_size, stat.st_mtime_ns) == snapshots[path]
+            for path in paths
+            for stat in (path.stat(),)
+        )
+    except OSError as exc:
+        print(f"hydra usage reconcile codex: corpus changed while reading: {exc}", file=sys.stderr)
+        return None
+    if not stable:
+        print(
+            "hydra usage reconcile codex: corpus changed while reading; retry later",
+            file=sys.stderr,
+        )
+        return None
+
+    unique: dict[str, dict[str, Any]] = {}
+    for session_id, session_messages in grouped.items():
+        for row in session_messages:
+            message = {**row, "session_id": session_id}
+            existing = unique.get(row["message_id"])
+            if existing is not None and existing != message:
+                print(
+                    "hydra usage reconcile codex: divergent duplicate message_id "
+                    f"{row['message_id']}",
+                    file=sys.stderr,
+                )
+                return None
+            unique.setdefault(row["message_id"], message)
+    return list(unique.values())
+
+
+def _apply_reconcile_pass(
+    chunks: list[list[dict[str, Any]]],
+) -> tuple[dict[str, int], bool, str]:
+    totals = _empty_reconcile_totals()
+    for index, chunk in enumerate(chunks):
+        response = _reconcile_request(chunk, apply=True)
+        if response is None:
+            phase = "partial apply" if index else "apply stopped"
+            if index:
+                print(
+                    "hydra usage reconcile codex: partial apply - "
+                    f"{index} of {len(chunks)} chunks completed; later state is unknown",
+                    file=sys.stderr,
+                )
+            return totals, True, phase
+        if response["conflicts"]:
+            totals["conflicts"] += response["conflicts"]
+            phase = "partial apply" if index else "apply stopped"
+            if index:
+                print(
+                    "hydra usage reconcile codex: partial apply - "
+                    f"{index} earlier chunks remain applied; remaining chunks were not sent",
+                    file=sys.stderr,
+                )
+            return totals, True, phase
+        for key in _RECONCILE_TOTALS:
+            totals[key] += response[key]
+    return totals, False, "applied"
+
+
+def run_reconcile(root: str | None = None, *, apply: bool = False) -> int:
+    base = Path(root) if root else Path.home() / ".codex" / "sessions"
+    if not base.is_dir():
+        print(
+            f"hydra usage reconcile codex: no rollout root at {base}",
+            file=sys.stderr,
+        )
+        _print_reconcile_totals(_empty_reconcile_totals(), "preview")
+        return 1
+
+    messages = _collect_reconcile_messages(base)
+    if messages is None:
+        _print_reconcile_totals(_empty_reconcile_totals(), "preview")
+        return 1
+    chunks = [messages[start : start + CHUNK] for start in range(0, len(messages), CHUNK)]
+
+    preview, preview_failed = _reconcile_pass(chunks, apply=False)
+    if not apply or preview_failed or preview["conflicts"]:
+        _print_reconcile_totals(preview, "preview")
+        return 1 if preview_failed or preview["conflicts"] else 0
+
+    applied, apply_failed, apply_phase = _apply_reconcile_pass(chunks)
+    _print_reconcile_totals(applied, apply_phase)
+    return 1 if apply_failed or applied["conflicts"] else 0
+
+
 def cmd_sweep(args: Any) -> int:
     return run_sweep(args.root, reset=args.reset)
+
+
+def cmd_reconcile(args: Any) -> int:
+    return run_reconcile(args.root, apply=args.apply)
