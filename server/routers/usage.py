@@ -302,7 +302,11 @@ def _blank_row(key: str) -> dict[str, Any]:
 
 
 def _fold(
-    target: dict[str, Any], src: dict[str, Any], parts: dict[str, float] | None
+    target: dict[str, Any],
+    src: dict[str, Any],
+    parts: dict[str, float] | None,
+    *,
+    flag_unpriced: bool = True,
 ) -> None:
     """Accumulate one (key, model, service_tier) bucket into a group row.
 
@@ -314,7 +318,8 @@ def _fold(
     for c in _COUNTERS:
         target[c] += src[c]
     if parts is None:
-        target["unpriced_messages"] += src["messages"]
+        if flag_unpriced:
+            target["unpriced_messages"] += src["messages"]
         return
     target["cost_usd"] += sum(parts.values())
     for name, value in parts.items():
@@ -336,7 +341,8 @@ async def usage_summary(
     summed into the group. The tier is in the key for the same reason the model
     is: it scales the bill, so a group mixing tiers cannot be priced from its
     summed counters. Messages on a model the rate table doesn't know contribute
-    their tokens but no cost, and are counted in `unpriced_messages`.
+    their tokens but no cost, and are counted in `unpriced_messages` - unless
+    the model is in `pricing.KNOWN_UNPRICED`, which is reported separately.
     """
     db = await get_db()
     key_sql = _GROUP_SQL[group_by]
@@ -369,6 +375,7 @@ async def usage_summary(
     grouped: dict[str, dict[str, Any]] = {}
     totals = _blank_row("total")
     unpriced_models: set[str] = set()
+    known_unpriced: set[str] = set()
     for row in rows:
         bucket = dict(row)
         parts = pricing.cost_components(
@@ -381,11 +388,12 @@ async def usage_summary(
             cache_write_1h_tokens=bucket["cache_write_1h_tokens"],
             web_search_requests=bucket["web_search_requests"],
         )
+        flag = bucket["model"] not in pricing.KNOWN_UNPRICED
         if parts is None:
-            unpriced_models.add(bucket["model"])
+            (unpriced_models if flag else known_unpriced).add(bucket["model"])
         target = grouped.setdefault(str(bucket["key"]), _blank_row(str(bucket["key"])))
-        _fold(target, bucket, parts)
-        _fold(totals, bucket, parts)
+        _fold(target, bucket, parts, flag_unpriced=flag)
+        _fold(totals, bucket, parts, flag_unpriced=flag)
 
     out = list(grouped.values())
     if group_by == "day":
@@ -402,4 +410,5 @@ async def usage_summary(
         "rows": out,
         "totals": totals,
         "unpriced_models": sorted(unpriced_models),
+        "known_unpriced_models": sorted(known_unpriced),
     }

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -24,10 +23,6 @@ _USAGE_KEYS = (
     "output_tokens",
     "reasoning_output_tokens",
     "total_tokens",
-)
-_THREAD_RE = re.compile(
-    r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$",
-    re.IGNORECASE,
 )
 
 
@@ -73,11 +68,6 @@ def _save_offsets(offsets: dict[str, int]) -> None:
         tmp.unlink(missing_ok=True)
 
 
-def _thread_id(path: Path) -> str | None:
-    match = _THREAD_RE.search(path.name)
-    return match.group(1) if match else None
-
-
 def _record(raw: bytes) -> dict[str, Any] | None:
     try:
         value = json.loads(raw.decode("utf-8", "replace"))
@@ -107,32 +97,9 @@ def _agent_type(source: Any) -> str | None:
     return None
 
 
-def _parent_model_at(path: Path, cutoff: str) -> str | None:
-    model = None
-    try:
-        with path.open("rb") as handle:
-            for raw in handle:
-                if not raw.endswith(b"\n"):
-                    break
-                rec = _record(raw)
-                if not rec or rec.get("type") != "turn_context":
-                    continue
-                timestamp = rec.get("timestamp")
-                payload = rec.get("payload")
-                if not isinstance(timestamp, str) or timestamp > cutoff:
-                    continue
-                if isinstance(payload, dict) and isinstance(payload.get("model"), str):
-                    model = payload["model"]
-    except OSError:
-        return None
-    return model
-
-
 def parse_file(
     path: str,
     offset: int = 0,
-    *,
-    thread_paths: dict[str, Path] | None = None,
 ) -> ParseResult:
     """Rebuild rollout state from byte zero and emit complete records after offset."""
     try:
@@ -148,13 +115,10 @@ def parse_file(
     parent_thread_id = None
     source: Any = None
     meta_cwd = None
-    meta_timestamp = None
     model = None
     effort = None
     cwd = None
     previous: dict[str, int] | None = None
-    inherited_parent_model: str | None = None
-    parent_model_checked = False
     usage_events = 0
     skipped_without_turn = 0
     long_context_calls = 0
@@ -182,10 +146,11 @@ def parse_file(
                         parent_thread_id = payload.get("parent_thread_id")
                         source = payload.get("source")
                         meta_cwd = payload.get("cwd")
-                        meta_timestamp = rec.get("timestamp")
                     continue
 
                 if rec.get("type") == "turn_context":
+                    # Guardian reviews report "codex-auto-review", a hidden routing alias
+                    # with no public backing model: kept as-is so it stays unpriced.
                     model = payload.get("model")
                     effort = payload.get("effort")
                     cwd = payload.get("cwd")
@@ -237,22 +202,6 @@ def parse_file(
                 if not all(isinstance(v, str) and v for v in (session_id, thread_id, timestamp)):
                     continue
 
-                row_model = model
-                if (
-                    row_model == "codex-auto-review"
-                    and isinstance(parent_thread_id, str)
-                    and isinstance(meta_timestamp, str)
-                    and thread_paths is not None
-                ):
-                    if not parent_model_checked:
-                        parent = thread_paths.get(parent_thread_id)
-                        inherited_parent_model = (
-                            _parent_model_at(parent, meta_timestamp) if parent else None
-                        )
-                        parent_model_checked = True
-                    if inherited_parent_model:
-                        row_model = inherited_parent_model
-
                 window = int(info.get("model_context_window") or 0)
                 if delta["input_tokens"] > _LONG_CONTEXT or window > _LONG_CONTEXT:
                     long_context_calls += 1
@@ -262,7 +211,7 @@ def parse_file(
                             f"codex:{thread_id}:{timestamp}:{cumulative['total_tokens']}"
                         ),
                         "ts": timestamp,
-                        "model": row_model,
+                        "model": model,
                         "harness": "codex-cli",
                         "cwd": cwd if isinstance(cwd, str) else meta_cwd,
                         "effort": effort,
@@ -325,11 +274,6 @@ def run_sweep(root: str | None = None, *, reset: bool = False) -> int:
         return 1
 
     paths = sorted(base.rglob("rollout-*.jsonl"))
-    thread_paths = {
-        thread_id: path
-        for path in paths
-        if (thread_id := _thread_id(path)) is not None
-    }
     offsets = {} if reset else _load_offsets()
     pending: dict[str, int] = {}
     batches: dict[str, list[dict[str, Any]]] = {}
@@ -351,7 +295,7 @@ def run_sweep(root: str | None = None, *, reset: bool = False) -> int:
             continue
 
         scanned += 1
-        result = parse_file(path_str, old_offset, thread_paths=thread_paths)
+        result = parse_file(path_str, old_offset)
         pending[path_str] = result.offset
         no_usage += result.usage_events == 0
         skipped_without_turn += result.skipped_without_turn
@@ -473,11 +417,6 @@ def _reconcile_pass(
 def _collect_reconcile_messages(base: Path) -> list[dict[str, Any]] | None:
     try:
         paths = sorted(base.rglob("rollout-*.jsonl"))
-        thread_paths = {
-            thread_id: path
-            for path in paths
-            if (thread_id := _thread_id(path)) is not None
-        }
     except OSError as exc:
         print(f"hydra usage reconcile codex: cannot enumerate {base}: {exc}", file=sys.stderr)
         return None
@@ -490,7 +429,7 @@ def _collect_reconcile_messages(base: Path) -> list[dict[str, Any]] | None:
         except OSError as exc:
             print(f"hydra usage reconcile codex: cannot stat {path}: {exc}", file=sys.stderr)
             return None
-        result = parse_file(str(path), 0, thread_paths=thread_paths)
+        result = parse_file(str(path), 0)
         try:
             after = path.stat()
         except OSError as exc:

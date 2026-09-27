@@ -24,15 +24,6 @@ def _fixture(name: str) -> Path:
     return FIXTURES / f"codex_{name}.jsonl"
 
 
-def _paths() -> dict[str, Path]:
-    return {
-        PARENT: _fixture("parent"),
-        GUARDIAN: _fixture("guardian"),
-        REVIEW: _fixture("review"),
-        SPAWN: _fixture("spawn"),
-    }
-
-
 def _install(root: Path, name: str, thread_id: str) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     path = root / f"rollout-2026-01-01T00-00-00-{thread_id}.jsonl"
@@ -235,19 +226,13 @@ def test_resume_reset_offset_replay_emits_only_post_reset_usage():
     assert resumed.offset == path.stat().st_size
 
 
-def test_guardian_inherits_parent_model_and_falls_back_without_parent():
-    inherited = usage_codex.parse_file(
-        str(_fixture("guardian")), thread_paths=_paths()
-    ).rows[0]
-    fallback = usage_codex.parse_file(
-        str(_fixture("guardian")), thread_paths={GUARDIAN: _fixture("guardian")}
-    ).rows[0]
+def test_guardian_keeps_auto_review_alias_unpriced():
+    row = usage_codex.parse_file(str(_fixture("guardian"))).rows[0]
 
-    assert inherited["model"] == "gpt-5.6-sol"
-    assert fallback["model"] == "codex-auto-review"
-    assert inherited["is_subagent"] is True
-    assert inherited["agent_type"] == "guardian"
-    assert inherited["cache_write_5m_tokens"] == 3
+    assert row["model"] == "codex-auto-review"
+    assert row["is_subagent"] is True
+    assert row["agent_type"] == "guardian"
+    assert row["cache_write_5m_tokens"] == 3
 
 
 @pytest.mark.parametrize(
@@ -680,11 +665,11 @@ def test_reconcile_dry_run_parses_from_zero_and_preserves_state(
     before = state_path.read_bytes()
     fake = ReconcileApi()
     original_parse = usage_codex.parse_file
-    calls: list[tuple[int, dict[str, Path] | None]] = []
+    calls: list[int] = []
 
-    def recording_parse(path, offset=0, *, thread_paths=None):
-        calls.append((offset, thread_paths))
-        return original_parse(path, offset, thread_paths=thread_paths)
+    def recording_parse(path, offset=0):
+        calls.append(offset)
+        return original_parse(path, offset)
 
     monkeypatch.setattr(usage_codex, "state_dir", lambda: state)
     monkeypatch.setattr(
@@ -701,8 +686,7 @@ def test_reconcile_dry_run_parses_from_zero_and_preserves_state(
     monkeypatch.setattr(usage_codex.api, "post", fake.post)
 
     assert usage_codex.run_reconcile(str(root)) == 0
-    assert calls and all(offset == 0 for offset, _paths in calls)
-    assert all(paths and PARENT in paths for _offset, paths in calls)
+    assert calls and all(offset == 0 for offset in calls)
     assert fake.posts and all(post["apply"] is False for post in fake.posts)
     assert all(message["session_id"] == PARENT for message in fake.posts[0]["messages"])
     assert state_path.read_bytes() == before
@@ -754,8 +738,8 @@ def test_reconcile_rejects_divergent_duplicate_ids_before_post(
     for path in paths:
         path.write_text("{}\n", encoding="utf-8")
 
-    def duplicate_parse(path, offset=0, *, thread_paths=None):
-        del offset, thread_paths
+    def duplicate_parse(path, offset=0):
+        del offset
         value = 1 if Path(path) == paths[0] else 2
         return usage_codex.ParseResult(
             [{"message_id": "codex:duplicate", "input_tokens": value}],
@@ -778,8 +762,8 @@ def test_reconcile_fails_closed_when_rollout_disappears(
     path = _install(root, "parent", PARENT)
     posts = []
 
-    def disappearing_parse(path_str, offset=0, *, thread_paths=None):
-        del offset, thread_paths
+    def disappearing_parse(path_str, offset=0):
+        del offset
         path.unlink()
         return usage_codex.ParseResult([], 0, PARENT)
 

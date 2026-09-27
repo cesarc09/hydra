@@ -23,6 +23,7 @@ class Rate(NamedTuple):
     input: float
     output: float
     cache_read_mult: float = 0.1
+    fast_mult: float = 2.0
 
 # USD per million tokens.
 # Only rates we can actually cite live here; anything else is deliberately
@@ -54,21 +55,29 @@ RATES: dict[str, Rate] = {
     "gpt-5.6-sol": Rate(4.0, 20.0),
     "gpt-5.6-terra": Rate(2.0, 12.0),
     "gpt-5.6-luna": Rate(0.2, 1.2),
+    "gpt-5.5": Rate(5.0, 30.0, fast_mult=2.5),
 }
+
+# Deliberately unpriced aliases. Guardian reviews report codex-auto-review, a
+# hidden routing alias OpenAI never maps to a public model. Tokens still count;
+# the dashboard notes them instead of flagging them as a missing rate.
+KNOWN_UNPRICED = frozenset({"codex-auto-review"})
 
 # Codex rows never carry write buckets, so these stay Anthropic's.
 CACHE_WRITE_5M_MULT = 1.25
 CACHE_WRITE_1H_MULT = 2.0
 
 # Service tier scales the whole bill, every column by the same factor - fast
-# mode is exactly 2x base on input, cached input, cache writes and output for
-# all four gpt models, and flex/batch exactly 0.5x. So this is a multiplier
-# over the computed cost rather than a second rate table keyed on (model, tier).
+# mode is 2x base on input, cached input, cache writes and output for every gpt
+# model except gpt-5.5 (2.5x, via Rate.fast_mult), and flex/batch exactly 0.5x.
+# So this is a multiplier over the computed cost rather than a second rate table
+# keyed on (model, tier).
 # OpenAI renamed "priority" to "fast" on 2026-07-30 and accepts both.
 # Absent (NULL) means default: Codex only writes a tier when a thread applies
 # settings, and no tier recorded means nothing moved it off the standard rate.
 # An unrecognised tier is unpriced rather than assumed 1x - silently charging
 # base for a premium tier is the same failure mode as a $0 unknown model.
+_FAST_TIERS = frozenset({"priority", "fast"})
 TIER_MULT: dict[str, float] = {
     "default": 1.0,
     "standard": 1.0,
@@ -134,6 +143,8 @@ def cost_components(
     mult = tier_mult(service_tier)
     if mult is None:
         return None
+    if (service_tier or "").strip().lower() in _FAST_TIERS:
+        mult = rate.fast_mult
     return {
         "input": input_tokens * rate.input * mult / 1_000_000,
         "output": output_tokens * rate.output * mult / 1_000_000,

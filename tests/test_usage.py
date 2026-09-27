@@ -338,6 +338,18 @@ async def test_empty_batch(client):
     assert res.json() == {"inserted": 0, "ignored": 0}
 
 
+async def test_known_unpriced_alias_is_noted_not_flagged(client):
+    await _post(client, "s1", [_msg("m1", model="codex-auto-review")])
+    body = (await client.get("/api/usage/summary?group_by=model")).json()
+
+    assert body["unpriced_models"] == []
+    assert body["known_unpriced_models"] == ["codex-auto-review"]
+    assert body["totals"]["unpriced_messages"] == 0
+    assert body["rows"][0]["unpriced_messages"] == 0
+    assert body["totals"]["cost_usd"] == 0.0
+    assert body["totals"]["output_tokens"] == 1000
+
+
 async def test_unknown_model_is_unpriced_not_free(client):
     await _post(client, "s1", [_msg("m1", model="claude-from-the-future-9")])
     body = (await client.get("/api/usage/summary?group_by=model")).json()

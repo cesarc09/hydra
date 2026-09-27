@@ -86,6 +86,28 @@ def test_fast_mode_doubles_every_component():
         assert fast[part] == pytest.approx(value * 2)
 
 
+@pytest.mark.parametrize("tier", ["priority", "fast"])
+def test_gpt_5_5_fast_tier_is_2_5x(tier: str):
+    std = pricing.cost_components(
+        "gpt-5.5", input_tokens=1_000_000, output_tokens=1_000_000,
+        cache_read_tokens=1_000_000,
+    )
+    fast = pricing.cost_components(
+        "gpt-5.5", service_tier=tier, input_tokens=1_000_000,
+        output_tokens=1_000_000, cache_read_tokens=1_000_000,
+    )
+    flex = pricing.cost_components("gpt-5.5", service_tier="flex", output_tokens=1_000_000)
+
+    assert std is not None and fast is not None and flex is not None
+    assert (std["input"], std["cache_read"], std["output"]) == pytest.approx((5.0, 0.5, 30.0))
+    assert (fast["input"], fast["cache_read"], fast["output"]) == pytest.approx((12.5, 1.25, 75.0))
+    assert flex["output"] == pytest.approx(15.0)
+
+
+def test_codex_auto_review_alias_is_unpriced():
+    assert pricing.cost_usd("codex-auto-review", input_tokens=1_000_000) is None
+
+
 def test_priority_and_fast_are_the_same_tier():
     # OpenAI renamed priority -> fast on 2026-07-30 and accepts both spellings.
     assert pricing.tier_mult("priority") == pricing.tier_mult("fast") == 2.0
