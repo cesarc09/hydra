@@ -53,7 +53,7 @@ server/
     hooks.py          - POST /api/hooks/event
     sessions.py       - GET sessions/events, SSE stream (require_auth_sse), editor config,
                         POST /sessions/{id}/archive|unarchive + /sessions/archive-ended
-    config.py         - GET/PUT /api/config/claude-md (empty-body guard), topic catalog; CRUD
+    config.py         - GET/PUT /api/config/claude-md + append-only history, topic catalog; CRUD
                         /api/config/commands (name-validated slash-command blobs)
     skills.py         - Publish/delete and per-harness render endpoints for instructions
                         and behavioural skills
@@ -68,6 +68,8 @@ server/
                         Unknown model -> cost None + unpriced_messages, never 0
   services/
     session_manager.py - State machine, bounded SSE broadcast, DB writes, archive ops
+    instruction_history.py - Append-only instructions revisions + idempotent migration seed
+    memory_routing.py  - Topic encoding and catalog validation under MEMORY_WRITE_LOCK
     skills.py          - Marker discovery, one-pass slot rendering, variant validation,
                          shared skills-store write lock
     slug.py            - Slug normalization + stoplist for auto-registered projects
@@ -83,6 +85,8 @@ client/
     sync.py                - Memory sync, keyed on the server row id (stamped into each
                               mirror file's frontmatter). Frontmatter parse, collision-free
                               filename assignment, tombstones, selective MEMORY.md + topic/catalog indexes
+    memory_routing.py      - Snapshot validation, root/topic/catalog index render,
+                              owned index publication + root budget warning
     commands.py            - `commands pull`: fetch the server command map, write
                               ~/.claude/commands/<name>.md, state-file-scoped prune
     hooks.py               - `hooks pull`: fetch the server hook map, install
@@ -120,7 +124,8 @@ scripts/
   publish_skills.py     - Stdlib-only skill source validation and publisher
 static/
   index.html, app.js   - Sessions dashboard (/); archive, Recent Events chip filter
-  memory.html, memory.js - Memory dashboard (/memory); browse, delete, copy, move,
+  memory.html, memory.js, memory.css - Memory dashboard (/memory); browse, delete, copy, move,
+                            routing + topic catalog editor,
                             pending-review queue for auto-registered projects
   usage.html, usage.js, usage.css - Usage dashboard (/usage); KPI row, daily cost
                             column chart (inline SVG, no charting lib), ranked tables,
@@ -178,6 +183,8 @@ tests/
 schema.sql            - DDL; sessions.archived_at, memories project_slug FK + UNIQUE(name)
                         (inline; db._migrate installs it on legacy DBs - see Key Patterns),
                         skills + skill_variants,
+                        document_versions (append-only instructions revisions),
+                        memory_topics + memories.topics (routing),
                         config_commands (server-distributed slash commands),
                         config_hooks (server-distributed policy hooks: script + wiring),
                         usage_messages (per-API-message token counts, PK message_id, service_tier)
@@ -221,6 +228,7 @@ schema.sql            - DDL; sessions.archived_at, memories project_slug FK + UN
 - **`/usage` chart palette is validated, not chosen by eye.** The four categorical slots in `static/usage.css` (`--series-1..4`) are the dark steps of a validated palette in a fixed order, measured against this page's real `#2C3233` surface: worst adjacent CVD ΔE **9.4**, normal-vision **26.5**, all ≥3:1 contrast. Reordering or substituting them re-runs those gates - a hand-picked warm set failed both the dark lightness band and the chroma floor (two of four would have read grey). Slots follow the entity, never its rank, so a filter never repaints the survivors. Everything else on the page is magnitude, which is why the ranked bars are deliberately **one** hue and carry meaning by length. Three defects only a render caught: a scaled `viewBox` distorts label text (render at measured pixel size), `max/4` ticks read `$47.21` (snap to 1/2/5×10ⁿ), and columns need a **band** scale or the first one sits on the axis labels.
 - **Instance diagnostics (`hydra doctor` + `/debug-hydra`):** the gathering lives in the CLI, not the slash command. `hydra doctor` probes `/api/health` (unauthenticated, catches `URLError` -> server DOWN), then an authed call (200/401 -> auth state), then aggregates stats, reports Remote Control capture health, and checks corpus invariants plus id-less or unparseable local memory strays. It prints a labeled report and **exits 0 with status in the text** so a wrapper never loses output - run it standalone for a zero-token health check. `/debug-hydra` just runs it and spends tokens on interpretation: a slash command earns its round-trip only when the LLM adds judgment, so raw stats belong in the CLI, never a relay-only command. `/api/health` must be deployed (server restart) before doctor reports `server: UP`; a stale server 404s as `DEGRADED`.
 - Before changing memory routing or sync, read README.md's “Selective memory routing” section.
+- Before changing instruction publication or historical reads, read README.md's “Instructions history” section.
 - **Upsert semantics:** memory names are **globally unique, scope-independent** - one name = one memory (`UNIQUE(name)`). `POST /api/memory` upserts on name; a POST whose name already exists in a *different* scope is **409** unless it passes `rescope: true`, preventing accidental scope changes. `PUT /api/memory/{id}` uses `model_dump(exclude_unset=True)`, so `{"project_slug": null}` **unpins** - dropping every None instead would make an unpin unexpressible, which is what forced re-scopes through delete + re-create in the first place.
 - **Legacy DBs (`_ensure_unique_memory_names` in `db.py`):** pre-existing DBs used two *partial* unique indexes, so one name could exist twice (once global, once pinned) - the shape the duplicate bug lived in. The migration collapses exact twins (a global row byte-identical to a pinned one is a stale-mirror re-insert; the pinned row wins), **renames** any remaining duplicate rather than deleting it, then swaps in `UNIQUE(name)`. The unique index is inline in `schema.sql` for fresh DBs but installed by `_migrate` for existing ones, because `get_db()` runs `schema.sql` *before* `_migrate` and a bare `CREATE UNIQUE INDEX` would abort startup while duplicates still exist.
 - **SSE broadcast:** `session_manager._subscribers` is a list of `asyncio.Queue(maxsize=1000)`. Slow consumers are dropped on `QueueFull` rather than blocking the broadcast.

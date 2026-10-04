@@ -75,6 +75,12 @@ Sync reads a coherent catalog and memory snapshot, publishes topic/catalog index
 
 Claude Code's native memory can lag the SessionStart pull by one session. Codex synchronizes before injecting its index. Mirrors are keyed by cwd.
 
+### Instructions history
+
+Both instructions publication endpoints save the document and its revision in one transaction.
+
+Instructions publications retain append-only revisions of the exact common body and harness slot maps. `hydra config history` lists revisions; `hydra config get-claude-md --at <timezone-qualified-ISO-timestamp> [--harness NAME]` reads the latest known published state at that time. Without `--harness`, it returns the common body. The migration seed records when the current state was captured, not its earlier publication date; history does not describe a running session's loaded context.
+
 ### Skills
 
 Public skill sources live in `client/skills/<name>/`: `common.md` holds the frontmatter (`name`, `description`) and the body; an optional `<harness>.json` supplies that harness's slot values; an optional `skill.json` carries metadata (`enabled`, `implicit_invocation`, `instances`). A directory named `instructions` publishes the instructions document rather than a skill. `scripts/publish_skills.sh [SOURCE_DIR]` seeds the store, defaulting to `client/skills/`. `debug-hydra` is the shipped public skill.
@@ -161,8 +167,9 @@ python -m hydra_cli project prune [--apply]
                       # a rejection rule, and which hold no pinned memories.
                       # Dry-run unless --apply. Slug twins are reported as merge
                       # candidates, never merged.
-python -m hydra_cli config get-claude-md
+python -m hydra_cli config get-claude-md [--at TIMESTAMP] [--harness NAME]
 python -m hydra_cli config put-claude-md FILE
+python -m hydra_cli config history
 python -m hydra_cli commands pull | put NAME FILE | get NAME | list | delete NAME
                       # Slash commands. `pull` is the SessionStart hook; the
                       # rest manage what the server distributes.

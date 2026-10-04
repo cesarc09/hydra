@@ -8,6 +8,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from urllib.parse import urlencode
 
 from hydra_cli import api
 from hydra_cli.apply_settings import cmd_apply_settings
@@ -370,7 +371,9 @@ def cmd_project_attach(args: argparse.Namespace) -> None:
 
 
 def cmd_config_get_claude_md(args: argparse.Namespace) -> None:
-    status, body = api.get("/api/config/claude-md")
+    params = {key: getattr(args, key) for key in ("at", "harness") if getattr(args, key, None)}
+    query = "?" + urlencode(params) if params else ""
+    status, body = api.get("/api/config/claude-md" + query)
     if status != 200:
         _die(status, body)
     print(body, end="")
@@ -379,7 +382,16 @@ def cmd_config_get_claude_md(args: argparse.Namespace) -> None:
 def cmd_config_put_claude_md(args: argparse.Namespace) -> None:
     with open(args.file, encoding="utf-8") as f:
         content = f.read()
-    status, body = api.put_text("/api/config/claude-md", content)
+    session = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CODEX_SESSION_ID")
+    headers = {"X-Session-Id": session} if session else None
+    status, body = api.put_text("/api/config/claude-md", content, headers=headers)
+    if status != 200:
+        _die(status, body)
+    _print_json(json.loads(body))
+
+
+def cmd_config_history(args: argparse.Namespace) -> None:
+    status, body = api.get("/api/config/claude-md/history")
     if status != 200:
         _die(status, body)
     _print_json(json.loads(body))
@@ -945,7 +957,10 @@ def build_parser() -> argparse.ArgumentParser:
     cfg = sub.add_parser("config")
     cfg_sub = cfg.add_subparsers(dest="command")
 
-    cfg_sub.add_parser("get-claude-md")
+    cg = cfg_sub.add_parser("get-claude-md")
+    cg.add_argument("--at", help="timezone-qualified ISO timestamp")
+    cg.add_argument("--harness", help="render using this revision's saved harness slots")
+    cfg_sub.add_parser("history", help="list instruction publication revisions")
 
     cp = cfg_sub.add_parser("put-claude-md")
     cp.add_argument("file")
@@ -1087,6 +1102,7 @@ DISPATCH = {
     ("project", "prune"): cmd_project_prune,
     ("config", "get-claude-md"): cmd_config_get_claude_md,
     ("config", "put-claude-md"): cmd_config_put_claude_md,
+    ("config", "history"): cmd_config_history,
     ("commands", "pull"): cmd_commands_pull,
     ("commands", "put"): cmd_commands_put,
     ("commands", "get"): cmd_commands_get,

@@ -184,6 +184,17 @@ def test_cli_refuses_false_routing_success(monkeypatch):
         cli.cmd_memory_update(args)
 
 
+def test_history_cli_query_preserves_exact_body(monkeypatch, capsys):
+    args = cli.build_parser().parse_args(['config', 'get-claude-md', '--at',
+                                       '2026-10-04T10:00:00+02:00', '--harness', 'codex-cli'])
+    paths = []
+    monkeypatch.setattr(cli.api, 'get', lambda path: (paths.append(path) or 200, 'exact\n\n'))
+    cli.cmd_config_get_claude_md(args)
+    assert capsys.readouterr().out == 'exact\n\n'
+    assert 'at=2026-10-04T10%3A00%3A00%2B02%3A00' in paths[0]
+    assert 'harness=codex-cli' in paths[0]
+
+
 def test_cli_topic_catalog_put_verifies_readback(tmp_path, monkeypatch, capsys):
     file = tmp_path / 'catalog.json'
     file.write_text(json.dumps([TOPIC]))
@@ -226,6 +237,21 @@ def test_cli_routing_filters_preserve_existing_scope(monkeypatch, capsys):
     out = capsys.readouterr()
     assert 'm3' in out.out and 'm1' not in out.out and 'm2' not in out.out
     assert 'proj + global' in out.err
+
+
+def test_config_publication_passes_session_header(tmp_path, monkeypatch):
+    file = tmp_path / 'instructions.md'
+    file.write_text('exact\n\n')
+    monkeypatch.delenv('CLAUDE_CODE_SESSION_ID', raising=False)
+    monkeypatch.setenv('CODEX_SESSION_ID', 'session-test')
+    calls = []
+    def put(path, text, *, headers):
+        calls.append((path, text, headers))
+        return 200, '{}'
+    monkeypatch.setattr(cli.api, 'put_text', put)
+    args = cli.build_parser().parse_args(['config', 'put-claude-md', str(file)])
+    cli.cmd_config_put_claude_md(args)
+    assert calls == [('/api/config/claude-md', 'exact\n\n', {'X-Session-Id': 'session-test'})]
 
 
 @pytest.mark.parametrize('stage', ['body', 'topic', 'catalog'])
