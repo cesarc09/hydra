@@ -48,6 +48,12 @@ CREATE TABLE IF NOT EXISTS skill_variants (
     PRIMARY KEY (name, variant)
 );
 
+CREATE TABLE IF NOT EXISTS memory_topics (
+    slug TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL
+);
+
 -- Server-distributed slash commands. One row per command; name is the
 -- slash-command name without ".md" (e.g. "sync", "finish"). Content is an
 -- opaque markdown blob - the server never interprets it. Clients pull these
@@ -127,6 +133,7 @@ CREATE TABLE IF NOT EXISTS memories (
     author_harness TEXT,
     author_session_id TEXT,
     author_model TEXT,
+    topics TEXT, -- NULL = unclassified; JSON [] = catalog only
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );

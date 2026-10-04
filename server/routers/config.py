@@ -6,7 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from server.auth import require_auth
 from server.db import get_db
-from server.models import HookUpsert
+from server.models import HookUpsert, MemoryTopic
+from server.routers.memory import require_flow
+from server.services.memory_routing import MEMORY_WRITE_LOCK
 from server.services.skills import SKILLS_WRITE_LOCK, validate
 
 router = APIRouter(prefix="/api/config", tags=["config"], dependencies=[Depends(require_auth)])
@@ -81,6 +83,39 @@ async def put_claude_md(request: Request):
     return {"status": "ok", "updated_at": now}
 
 
+@router.get("/memory-topics")
+async def get_memory_topics() -> list[MemoryTopic]:
+    async with MEMORY_WRITE_LOCK:
+        db = await get_db()
+        rows = await db.execute_fetchall("SELECT * FROM memory_topics ORDER BY slug")
+    return [MemoryTopic(**dict(row)) for row in rows]
+
+
+@router.put("/memory-topics", dependencies=[Depends(require_flow)])
+async def put_memory_topics(topics: list[MemoryTopic]):
+    slugs = {topic.slug for topic in topics}
+    if len(slugs) != len(topics):
+        raise HTTPException(status_code=422, detail="Duplicate topic slugs")
+    async with MEMORY_WRITE_LOCK:
+        db = await get_db()
+        rows = await db.execute_fetchall("SELECT topics FROM memories WHERE topics IS NOT NULL")
+        referenced = {slug for row in rows for slug in json.loads(row[0])}
+        removed = sorted(referenced - slugs)
+        if removed:
+            raise HTTPException(status_code=409, detail=f"Topic still referenced: {removed[0]}")
+        try:
+            await db.execute("DELETE FROM memory_topics")
+            await db.executemany(
+                "INSERT INTO memory_topics (slug, title, description) VALUES (?, ?, ?)",
+                [(topic.slug, topic.title, topic.description) for topic in topics],
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    return {"status": "ok"}
+
+
 @router.get("/commands")
 async def list_commands() -> dict[str, str]:
     """Return every distributed command as a {name: content} map. The client
@@ -123,11 +158,16 @@ async def put_command(name: str, request: Request):
 
 @router.delete("/commands/{name}", status_code=204)
 async def delete_command(name: str):
-    db = await get_db()
-    cursor = await db.execute("DELETE FROM config_commands WHERE name = ?", (name,))
-    if cursor.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Command not found")
-    await db.commit()
+    async with SKILLS_WRITE_LOCK:
+        db = await get_db()
+        try:
+            cursor = await db.execute("DELETE FROM config_commands WHERE name = ?", (name,))
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Command not found")
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
 
 
 def _hook_row_to_dict(row) -> dict:
@@ -280,8 +320,13 @@ async def put_hook(name: str, hook: HookUpsert):
 
 @router.delete("/hooks/{name}", status_code=204)
 async def delete_hook(name: str):
-    db = await get_db()
-    cursor = await db.execute("DELETE FROM config_hooks WHERE name = ?", (name,))
-    if cursor.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Hook not found")
-    await db.commit()
+    async with SKILLS_WRITE_LOCK:
+        db = await get_db()
+        try:
+            cursor = await db.execute("DELETE FROM config_hooks WHERE name = ?", (name,))
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Hook not found")
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise

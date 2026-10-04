@@ -119,11 +119,14 @@ async def delete_skill(name: str):
         raise HTTPException(status_code=422, detail="Instructions cannot be deleted")
     async with SKILLS_WRITE_LOCK:
         db = await get_db()
-        cursor = await db.execute("DELETE FROM skills WHERE name = ?", (name,))
-        if cursor.rowcount == 0:
+        try:
+            cursor = await db.execute("DELETE FROM skills WHERE name = ?", (name,))
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Skill not found")
+            await db.commit()
+        except Exception:
             await db.rollback()
-            raise HTTPException(status_code=404, detail="Skill not found")
-        await db.commit()
+            raise
 
 
 @router.get("/{harness}")

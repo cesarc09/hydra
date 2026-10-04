@@ -281,3 +281,12 @@ def test_bash_denies_a_read_command_redirected_into_the_mirror(tmp_path: Path) -
         payload("Bash", {"command": f"cat /tmp/x > {target}"}), {}, home=tmp_path
     )
     assert reason is not None
+
+
+def test_topic_catalog_write_requires_flow(tmp_path):
+    from hydra_cli.guard import run_guard
+    payload = {'tool_name': 'Bash',
+               'tool_input': {'command': 'hydra memory topics put topics.json'}}
+    assert run_guard(json.dumps(payload), {}, home=tmp_path) is not None
+    payload['tool_input']['command'] += ' --flow sync'
+    assert run_guard(json.dumps(payload), {}, home=tmp_path) is None

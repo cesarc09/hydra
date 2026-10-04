@@ -135,7 +135,10 @@ def _is_memory_command(words: list[str]) -> bool:
         for index in range(len(words) - 1)
     )
     for index in range(len(words) - 1):
-        if words[index] != "memory" or words[index + 1] not in _MEMORY_VERBS:
+        catalog_write = words[index:index + 3] == ["memory", "topics", "put"]
+        if words[index] != "memory" or (
+            words[index + 1] not in _MEMORY_VERBS and not catalog_write
+        ):
             continue
         if index > 0 and _basename(words[index - 1]) == "hydra":
             return True
