@@ -149,7 +149,9 @@ python -m hydra_cli sync [--pull] [--dry-run] [--cwd PATH]
                       # --pull is accepted for compatibility.
 python -m hydra_cli memory list [--all|--project SLUG|--global] [--json]
                       [--topic SLUG|--catalog-only|--unclassified]
-                      # Defaults to this project + globals, one index line each.
+                      # Defaults to this project + globals, one index line each:
+                      # `id type scope [routing] - name - desc`, routing being
+                      # topic slugs, `catalog` or `unclassified`.
                       # --json returns full rows with bodies.
 python -m hydra_cli memory get ID
 python -m hydra_cli memory create ... --flow <name>

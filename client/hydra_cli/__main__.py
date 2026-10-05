@@ -74,10 +74,19 @@ def _add_routing_flags(parser: argparse.ArgumentParser) -> None:
     routing.add_argument("--unclassified", action="store_true")
 
 
+def _routing_token(topics: object) -> str:
+    # Mirrors the router: null loads at startup, [] is catalog-only, else topic slugs.
+    if topics is None:
+        return "unclassified"
+    if isinstance(topics, list):
+        return ",".join(str(slug) for slug in topics) if topics else "catalog"
+    return "invalid"
+
+
 def _brief_line(mem: dict[str, object]) -> str:
     scope = mem.get("project_slug") or "GLOBAL"
     return (
-        f"{mem['id']} {mem['type']} {scope}"
+        f"{mem['id']} {mem['type']} {scope} [{_routing_token(mem.get('topics'))}]"
         f" - {mem['name']} - {mem.get('description') or ''}"
     )
 
