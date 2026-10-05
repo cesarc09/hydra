@@ -129,6 +129,9 @@ def test_bash_denies_ambiguous_unbalanced_quote(tmp_path: Path) -> None:
         'git commit -m "memory: create hydra"',
         'grep "hydra memory create" notes.md',
         'bash -c "hydra memory create --name x"',
+        "hydra memory create --help",
+        "hydra memory update -h",
+        "python -m hydra_cli memory topics put --help",
     ],
 )
 def test_bash_allows_reads_marked_writes_and_quoted_text(

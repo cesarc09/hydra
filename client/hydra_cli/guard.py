@@ -129,6 +129,9 @@ def _is_memory_command(words: list[str]) -> bool:
         words = words[1:]
     if any(word == "--flow" or word.startswith("--flow=") for word in words):
         return False
+    # argparse prints help and exits before any request is built, so this is a read.
+    if any(word in ("-h", "--help") for word in words):
+        return False
 
     module_invocation = any(
         words[index : index + 2] == ["-m", "hydra_cli"]
