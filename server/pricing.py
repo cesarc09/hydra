@@ -50,7 +50,10 @@ RATES: dict[str, Rate] = {
     "claude-sonnet-4-6": Rate(3.0, 15.0),
     "claude-sonnet-4-5": Rate(3.0, 15.0),
     "claude-haiku-4-5": Rate(1.0, 5.0),
+    # claude-haiku-5-5 is deliberately absent: it bills 5x per request whose
+    # prompt exceeds 100k, which summed group rows cannot see.
     "gpt-6-astra": Rate(10.0, 50.0),
+    "gpt-6.1-sol": Rate(2.0, 10.0, 0.05),
     # Sol alone is promotional - at least through November 21, 2026. Re-verify
     # after; terra and luna are standard rates and carry no end date.
     "gpt-5.6-sol": Rate(4.0, 20.0),
