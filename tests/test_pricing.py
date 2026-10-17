@@ -30,6 +30,24 @@ def test_opus_5_5_rates_and_reduced_cache_reads():
     assert parts["cache_write_1h"] == pytest.approx(8.0)
 
 
+def test_sonnet_5_5_rates_and_reduced_cache_reads():
+    parts = pricing.cost_components(
+        "claude-sonnet-5-5",
+        input_tokens=1_000_000,
+        output_tokens=1_000_000,
+        cache_read_tokens=1_000_000,
+        cache_write_5m_tokens=1_000_000,
+        cache_write_1h_tokens=1_000_000,
+    )
+
+    assert parts is not None
+    assert parts["input"] == pytest.approx(2.0)
+    assert parts["output"] == pytest.approx(10.0)
+    assert parts["cache_read"] == pytest.approx(0.10)
+    assert parts["cache_write_5m"] == pytest.approx(2.5)
+    assert parts["cache_write_1h"] == pytest.approx(4.0)
+
+
 def test_sonnet_5_uses_permanent_rates():
     parts = pricing.cost_components(
         "claude-sonnet-5", input_tokens=1_000_000, output_tokens=1_000_000
