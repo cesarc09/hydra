@@ -13,6 +13,8 @@
     "defaultMode": "auto"
   },
   "cleanupPeriodDays": 999,
+  "remoteControlAtStartup": true,
+  "autoCompactEnabled": false,
   "statusLine": {
     "type": "command",
     "command": "~/.claude/hydra_statusline.sh",
