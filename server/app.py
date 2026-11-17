@@ -21,6 +21,10 @@ _BODY_LIMITS: dict[str, int] = {
     "/api/usage/messages": 1024 * 1024,
     "/api/usage/reconcile/codex": 1024 * 1024,
 }
+# Prefix caps for routes with a name in the path; an exact entry above wins.
+_BODY_LIMIT_PREFIXES: dict[str, int] = {
+    "/api/config/plugins/": 1024 * 1024,
+}
 _DEFAULT_BODY_LIMIT = 256 * 1024
 
 
@@ -57,17 +61,28 @@ class BodySizeLimitMiddleware:
     reject before the client uploads anything.
     """
 
-    def __init__(self, app, limits: dict[str, int], default: int):
+    def __init__(
+        self, app, limits: dict[str, int], default: int, prefixes: dict[str, int] | None = None
+    ):
         self.app = app
         self.limits = limits
         self.default = default
+        self.prefixes = prefixes or {}
+
+    def _limit_for(self, path: str) -> int:
+        if path in self.limits:
+            return self.limits[path]
+        for prefix, limit in self.prefixes.items():
+            if path.startswith(prefix):
+                return limit
+        return self.default
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
 
-        limit = self.limits.get(scope["path"], self.default)
+        limit = self._limit_for(scope["path"])
 
         content_length = _scope_header(scope, b"content-length")
         if content_length is not None:
@@ -111,7 +126,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Hydra", lifespan=lifespan)
 
 app.add_middleware(
-    BodySizeLimitMiddleware, limits=_BODY_LIMITS, default=_DEFAULT_BODY_LIMIT
+    BodySizeLimitMiddleware,
+    limits=_BODY_LIMITS,
+    default=_DEFAULT_BODY_LIMIT,
+    prefixes=_BODY_LIMIT_PREFIXES,
 )
 
 

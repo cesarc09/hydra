@@ -104,6 +104,18 @@ CREATE TABLE IF NOT EXISTS config_hooks (
     updated_at TEXT NOT NULL
 );
 
+-- Server-distributed Claude Code plugins: a whole file tree per row. Clients
+-- install it under a Hydra-owned local marketplace and enable it in a
+-- generated settings layer.
+CREATE TABLE IF NOT EXISTS config_plugins (
+    name       TEXT PRIMARY KEY,
+    files      TEXT NOT NULL,          -- JSON {relative posix path: text}
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    instances  TEXT,                   -- NULL = every machine; else a JSON array
+                                       -- of HYDRA_INSTANCE_ID values
+    updated_at TEXT NOT NULL
+);
+
 -- Project registry. Paths live in project_paths so the same project can
 -- exist at different filesystem paths on different machines.
 CREATE TABLE IF NOT EXISTS projects (

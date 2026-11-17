@@ -21,12 +21,14 @@ fi
 # Pull server-distributed content before rendering the settings layer.
 python -m hydra_cli hooks pull || true
 python -m hydra_cli skills pull --harness claude-code || true
+python -m hydra_cli plugins pull || true
 
 python -m hydra_cli apply-settings \
     --hydra-template "$SCRIPT_DIR/settings.json" \
     --user-template "$SCRIPT_DIR/settings.user.template.json" \
     --user-file "$USER_FILE" \
     --hooks-layer "$CLAUDE_DIR/settings.hooks.json" \
+    --plugins-layer "$CLAUDE_DIR/settings.plugins.json" \
     --output "$TARGET" \
     --hydra-url "$HYDRA_URL" \
     --hydra-repo-path "$HYDRA_REPO_PATH"

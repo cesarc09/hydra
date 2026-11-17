@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from server.auth import require_auth
 from server.db import get_db
-from server.models import HookUpsert, MemoryTopic
+from server.models import HookUpsert, MemoryTopic, PluginUpsert
 from server.routers.memory import require_flow
 from server.services.instruction_history import append_revision, instant, now
 from server.services.memory_routing import MEMORY_WRITE_LOCK
@@ -369,6 +369,89 @@ async def delete_hook(name: str):
             cursor = await db.execute("DELETE FROM config_hooks WHERE name = ?", (name,))
             if cursor.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Hook not found")
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+
+
+def plugin_path_error(paths) -> str | None:
+    """Return why a plugin file key is unsafe on any client OS, or None.
+
+    Mirrored in client/hydra_cli/plugins.py (the client cannot import server.*);
+    tests run one case list against both."""
+    seen: dict[str, str] = {}
+    for path in paths:
+        if not path:
+            return "empty file path"
+        if path.startswith("/"):
+            return f"absolute file path: {path!r}"
+        # Backslash is a Windows separator and ':' a drive or ADS marker.
+        if "\\" in path or ":" in path or any(ord(ch) < 32 for ch in path):
+            return f"forbidden character in file path: {path!r}"
+        for segment in path.split("/"):
+            if segment in ("", ".", ".."):
+                return f"empty, '.' or '..' segment in file path: {path!r}"
+            # Windows strips these, so 'a.' and 'a' would alias.
+            if segment[-1] in ". ":
+                return f"segment ends in '.' or space in file path: {path!r}"
+        folded = path.casefold()
+        if folded in seen:
+            return f"file paths differ only by case: {seen[folded]!r} and {path!r}"
+        seen[folded] = path
+    return None
+
+
+def _plugin_row_to_dict(row) -> dict:
+    try:
+        instances = json.loads(row[2]) if row[2] else None
+    except json.JSONDecodeError:
+        instances = None
+    return {"files": json.loads(row[0]), "enabled": bool(row[1]), "instances": instances}
+
+
+@router.get("/plugins")
+async def list_plugins() -> dict[str, dict]:
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT name, files, enabled, instances FROM config_plugins ORDER BY name"
+    )
+    return {row[0]: _plugin_row_to_dict(row[1:]) for row in rows}
+
+
+@router.put("/plugins/{name}")
+async def put_plugin(name: str, plugin: PluginUpsert):
+    if not _CONFIG_NAME_RE.match(name):
+        raise HTTPException(status_code=400, detail="Invalid plugin name")
+    if not plugin.files:
+        raise HTTPException(status_code=400, detail="Plugin files cannot be empty")
+    error = plugin_path_error(plugin.files)
+    if error is not None:
+        raise HTTPException(status_code=400, detail=error)
+    files = json.dumps(plugin.files, sort_keys=True)
+    instances = json.dumps(plugin.instances) if plugin.instances is not None else None
+    now = datetime.now(UTC).replace(microsecond=0).isoformat()
+    values = (files, int(plugin.enabled), instances, now)
+    db = await get_db()
+    await db.execute(
+        """INSERT INTO config_plugins (name, files, enabled, instances, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(name) DO UPDATE SET
+               files = ?, enabled = ?, instances = ?, updated_at = ?""",
+        (name, *values, *values),
+    )
+    await db.commit()
+    return {"status": "ok", "updated_at": now}
+
+
+@router.delete("/plugins/{name}", status_code=204)
+async def delete_plugin(name: str):
+    async with SKILLS_WRITE_LOCK:
+        db = await get_db()
+        try:
+            cursor = await db.execute("DELETE FROM config_plugins WHERE name = ?", (name,))
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Plugin not found")
             await db.commit()
         except Exception:
             await db.rollback()

@@ -55,13 +55,73 @@ def test_merge_hydra_only_event_preserved() -> None:
     assert out["hooks"]["SessionStart"] == hydra["hooks"]["SessionStart"]
 
 
-def test_merge_non_hooks_user_wins() -> None:
+def test_merge_scalars_user_wins() -> None:
     hydra = {"effortLevel": "high", "autoUpdatesChannel": "latest"}
     user = {"effortLevel": "max", "attribution": {"pr": "", "commit": ""}}
     out = merge(hydra, user)
     assert out["effortLevel"] == "max"
     assert out["attribution"] == {"pr": "", "commit": ""}
     assert out["autoUpdatesChannel"] == "latest"
+
+
+def test_merge_objects_merge_per_sub_key() -> None:
+    base = {"attribution": {"pr": "base", "commit": "base"}, "env": {"A": "1"}}
+    over = {"attribution": {"pr": ""}, "env": {"B": "2"}}
+    out = merge(base, over)
+    assert out["attribution"] == {"pr": "", "commit": "base"}
+    assert out["env"] == {"A": "1", "B": "2"}
+
+
+def test_merge_arrays_and_type_mismatch_are_replaced() -> None:
+    base = {"permissions": {"allow": ["Bash(ls)"], "defaultMode": "auto"}, "x": {"a": 1}}
+    over = {"permissions": {"allow": ["Read"]}, "x": "scalar"}
+    out = merge(base, over)
+    assert out["permissions"] == {"allow": ["Read"], "defaultMode": "auto"}
+    assert out["x"] == "scalar"
+
+
+def test_merge_is_one_level_marketplace_source_never_mixes() -> None:
+    """A user's github source for the same marketplace must replace the
+    directory one whole: a leaked `path` means something else for github."""
+    layer = {
+        "extraKnownMarketplaces": {
+            "hydra": {"source": {"source": "directory", "path": "C:/Users/x/.claude/hydra-plugins"}}
+        }
+    }
+    user = {"extraKnownMarketplaces": {"hydra": {"source": {"source": "github", "repo": "o/r"}}}}
+    out = merge(layer, user)
+    assert out["extraKnownMarketplaces"] == {
+        "hydra": {"source": {"source": "github", "repo": "o/r"}}
+    }
+
+
+def test_merge_user_marketplace_and_plugins_coexist_with_layer() -> None:
+    layer = {
+        "extraKnownMarketplaces": {"hydra": {"source": {"source": "directory", "path": "/p"}}},
+        "enabledPlugins": {"look@hydra": True},
+    }
+    user = {
+        "extraKnownMarketplaces": {"mine": {"source": {"source": "github", "repo": "o/r"}}},
+        "enabledPlugins": {"tool@mine": True, "look@hydra": False},
+    }
+    out = merge(layer, user)
+    assert set(out["extraKnownMarketplaces"]) == {"hydra", "mine"}
+    assert out["enabledPlugins"] == {"look@hydra": False, "tool@mine": True}
+
+
+def test_merge_user_statusline_inherits_template_sub_key() -> None:
+    """The accepted cost of the one-level merge: a user's own command keeps the
+    template's refreshInterval."""
+    defaults = {
+        "statusLine": {
+            "type": "command",
+            "command": "~/.claude/hydra_statusline.sh",
+            "refreshInterval": 30,
+        }
+    }
+    user = {"statusLine": {"type": "command", "command": "~/mine.sh"}}
+    out = merge(defaults, user)
+    assert out["statusLine"] == {"type": "command", "command": "~/mine.sh", "refreshInterval": 30}
 
 
 def test_migrate_drops_stale_max_effort_level() -> None:
@@ -423,6 +483,61 @@ def test_apply_tolerates_malformed_hooks_layer(tmp_path: Path) -> None:
     assert len(json.loads(output.read_text())["hooks"]["PreToolUse"]) == 1
 
 
+def test_apply_plugins_layer_lands_below_user(tmp_path: Path) -> None:
+    hydra_tpl, user_tpl, user_file, output = _layer_setup(tmp_path)
+    user_file.write_text(json.dumps({"enabledPlugins": {"tool@mine": True}}))
+    layer = tmp_path / "settings.plugins.json"
+    layer.write_text(
+        json.dumps(
+            {
+                "extraKnownMarketplaces": {
+                    "hydra": {"source": {"source": "directory", "path": "/h/.claude/hydra-plugins"}}
+                },
+                "enabledPlugins": {"look@hydra": True},
+            }
+        )
+    )
+    cmd_apply_settings(
+        _ns(
+            hydra_template=str(hydra_tpl),
+            user_template=str(user_tpl),
+            user_file=str(user_file),
+            hooks_layer=str(tmp_path / "absent.json"),
+            plugins_layer=str(layer),
+            output=str(output),
+            hydra_url="http://h",
+            hydra_repo_path="/r",
+        )
+    )
+    out = json.loads(output.read_text())
+    assert out["enabledPlugins"] == {"look@hydra": True, "tool@mine": True}
+    assert out["extraKnownMarketplaces"]["hydra"]["source"]["source"] == "directory"
+    assert out["effortLevel"] == "xhigh"
+    assert len(out["hooks"]["PreToolUse"]) == 1
+
+
+@pytest.mark.parametrize("content", ["{not json", "[1, 2]"])
+def test_apply_tolerates_malformed_plugins_layer(tmp_path: Path, content: str, capsys) -> None:
+    hydra_tpl, user_tpl, user_file, output = _layer_setup(tmp_path)
+    layer = tmp_path / "settings.plugins.json"
+    layer.write_text(content)
+    cmd_apply_settings(
+        _ns(
+            hydra_template=str(hydra_tpl),
+            user_template=str(user_tpl),
+            user_file=str(user_file),
+            plugins_layer=str(layer),
+            output=str(output),
+            hydra_url="http://h",
+            hydra_repo_path="/r",
+        )
+    )
+    out = json.loads(output.read_text())
+    assert "enabledPlugins" not in out
+    assert out["effortLevel"] == "xhigh"
+    assert "plugins layer" in capsys.readouterr().err
+
+
 # --- migration: strip wiring the server now owns ---
 
 
@@ -516,10 +631,10 @@ def test_apply_rewrites_user_file_dropping_duplicated_wiring(
 
 
 def test_shipped_layers_do_not_share_a_top_level_key() -> None:
-    """One key, one shipped layer. `merge` replaces every key except `hooks`
-    wholesale, so a key present in both files silently loses the earlier
-    layer's value on every machine - with nobody having customized anything.
-    `hooks` is exempt: those concatenate per event rather than replace."""
+    """One key, one shipped layer. `merge` replaces scalars and arrays wholesale
+    and object sub-keys one by one, so a key present in both files silently
+    loses (part of) the earlier layer's value on every machine - with nobody
+    having customized anything. `hooks` is exempt: those concatenate per event."""
     client = Path(__file__).resolve().parents[1] / "client"
     base = json.loads((client / "settings.json").read_text(encoding="utf-8"))
     defaults = json.loads((client / "settings.user.template.json").read_text(encoding="utf-8"))
@@ -527,7 +642,7 @@ def test_shipped_layers_do_not_share_a_top_level_key() -> None:
     shared = (set(base) & set(defaults)) - {"hooks"}
     assert not shared, (
         f"{sorted(shared)} appears in both settings.json and settings.user.template.json; "
-        f"the later layer wins wholesale, so move it into exactly one of them"
+        f"the later layer wins, so move it into exactly one of them"
     )
 
 

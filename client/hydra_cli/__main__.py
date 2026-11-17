@@ -23,6 +23,8 @@ from hydra_cli.commands import run_pull as run_commands_pull
 from hydra_cli.guard import main as run_guard_main
 from hydra_cli.hooks import run_pull as run_hooks_pull
 from hydra_cli.memory_routing import validate_snapshot, validate_topics
+from hydra_cli.plugins import path_error as plugin_path_error
+from hydra_cli.plugins import run_pull as run_plugins_pull
 from hydra_cli.prune import cmd_project_prune
 from hydra_cli.remote import cmd_capture_remote_url, scan_bridge_records
 from hydra_cli.skills import HARNESSES
@@ -596,6 +598,82 @@ def cmd_hooks_delete(args: argparse.Namespace) -> None:
         _die(status, body)
 
 
+# --- plugins (server-distributed Claude Code plugins) ---
+
+
+def cmd_plugins_pull(args: argparse.Namespace) -> None:
+    sys.exit(run_plugins_pull(adopt=args.adopt))
+
+
+def _plugin_files(directory: Path) -> dict[str, str]:
+    if not directory.is_dir():
+        _hook_cli_error(f"not a directory: {directory}")
+    files: dict[str, str] = {}
+    for current, dirnames, filenames in os.walk(directory, followlinks=False):
+        here = Path(current)
+        rel_dir = here.relative_to(directory)
+        if rel_dir == Path(".claude-plugin") and "types" in dirnames:
+            dirnames.remove("types")  # engine-generated
+        # Repo metadata (a dir, or a worktree's pointer file), never plugin content.
+        dirnames[:] = [d for d in dirnames if d != ".git"]
+        filenames = [f for f in filenames if f != ".git"]
+        for entry in sorted(dirnames + filenames):
+            path = here / entry
+            if path.is_symlink():
+                _hook_cli_error(f"refusing symlink in plugin: {path}")
+        dirnames.sort()
+        for filename in sorted(filenames):
+            path = here / filename
+            if not path.is_file():
+                _hook_cli_error(f"not a regular file: {path}")
+            try:
+                text = path.read_bytes().decode("utf-8")
+            except UnicodeDecodeError:
+                _hook_cli_error(f"not UTF-8 text: {path}")
+            except OSError as exc:
+                _hook_cli_error(f"cannot read {path}: {exc}")
+            files[path.relative_to(directory).as_posix()] = text
+    if not files:
+        _hook_cli_error(f"plugin directory has no files: {directory}")
+    error = plugin_path_error(files)
+    if error is not None:
+        _hook_cli_error(error)
+    return files
+
+
+def cmd_plugins_put(args: argparse.Namespace) -> None:
+    payload: dict[str, object] = {
+        "files": _plugin_files(Path(args.dir)),
+        "enabled": not args.disabled,
+    }
+    if args.instances:
+        payload["instances"] = [s.strip() for s in args.instances.split(",") if s.strip()]
+    size = len(json.dumps(payload).encode("utf-8"))
+    print(f"plugins put: {args.name} payload {size} bytes", file=sys.stderr)
+    status, body = api.put_json(f"/api/config/plugins/{args.name}", payload)
+    if status != 200:
+        _die(status, body)
+    _print_json(json.loads(body))
+
+
+def cmd_plugins_list(args: argparse.Namespace) -> None:
+    status, body = api.get("/api/config/plugins")
+    if status != 200:
+        _die(status, body)
+    for name, spec in json.loads(body).items():
+        flags = [] if spec.get("enabled", True) else ["disabled"]
+        if spec.get("instances"):
+            flags.append(f"instances={','.join(spec['instances'])}")
+        suffix = f"  [{', '.join(flags)}]" if flags else ""
+        print(f"{name}\t{len(spec.get('files') or {})} files{suffix}")
+
+
+def cmd_plugins_delete(args: argparse.Namespace) -> None:
+    status, body = api.delete(f"/api/config/plugins/{args.name}")
+    if status != 204:
+        _die(status, body)
+
+
 # --- doctor (instance health + stats + anomaly checks) ---
 
 
@@ -1018,6 +1096,24 @@ def build_parser() -> argparse.ArgumentParser:
     hdel = hks_sub.add_parser("delete")
     hdel.add_argument("name")
 
+    # --- plugins (server-distributed Claude Code plugins) ---
+    plg = sub.add_parser("plugins", help="server-distributed Claude Code plugins")
+    plg_sub = plg.add_subparsers(dest="command")
+
+    ppull = plg_sub.add_parser("pull", help="install server plugins into ~/.claude/hydra-plugins")
+    ppull.add_argument("--adopt", action="store_true")
+
+    pput = plg_sub.add_parser("put", help="publish a plugin directory")
+    pput.add_argument("name")
+    pput.add_argument("dir")
+    pput.add_argument("--instances", help="comma-separated HYDRA_INSTANCE_IDs; omit for all")
+    pput.add_argument("--disabled", action="store_true", help="store but do not distribute")
+
+    plg_sub.add_parser("list")
+
+    pdel = plg_sub.add_parser("delete")
+    pdel.add_argument("name")
+
     # --- skills (server-distributed instructions and behavioural skills) ---
     sks = sub.add_parser("skills", help="server-distributed skills")
     sks_sub = sks.add_subparsers(dest="command")
@@ -1088,6 +1184,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--hooks-layer",
         help="generated server-hooks layer (settings.hooks.json); missing = none",
     )
+    aps.add_argument(
+        "--plugins-layer",
+        help="generated plugins layer (settings.plugins.json); missing = none",
+    )
     aps.add_argument("--output", required=True)
     aps.add_argument("--hydra-url", required=True)
     aps.add_argument("--hydra-repo-path", required=True)
@@ -1122,6 +1222,10 @@ DISPATCH = {
     ("hooks", "get"): cmd_hooks_get,
     ("hooks", "list"): cmd_hooks_list,
     ("hooks", "delete"): cmd_hooks_delete,
+    ("plugins", "pull"): cmd_plugins_pull,
+    ("plugins", "put"): cmd_plugins_put,
+    ("plugins", "list"): cmd_plugins_list,
+    ("plugins", "delete"): cmd_plugins_delete,
     ("skills", "pull"): cmd_skills_pull,
     ("usage", "report"): cmd_usage_report,
     ("usage", "backfill"): cmd_usage_backfill,

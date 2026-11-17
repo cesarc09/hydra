@@ -85,6 +85,10 @@ Instructions publications retain append-only revisions of the exact common body 
 
 Public skill sources live in `client/skills/<name>/`: `common.md` holds the frontmatter (`name`, `description`) and the body; an optional `<harness>.json` supplies that harness's slot values; an optional `skill.json` carries metadata (`enabled`, `implicit_invocation`, `instances`). A directory named `instructions` publishes the instructions document rather than a skill. `scripts/publish_skills.sh [SOURCE_DIR]` seeds the store, defaulting to `client/skills/`. `debug-hydra` is the shipped public skill.
 
+### Plugins
+
+`hydra plugins put NAME DIR` publishes a Claude Code plugin directory (symlinks and non-UTF-8 files are refused; `.claude-plugin/types/` and `.git` are skipped). Each machine's SessionStart `hydra plugins pull` installs it under `~/.claude/hydra-plugins/<name>/`, a local `directory` marketplace named `hydra`, and enables it through `~/.claude/settings.plugins.json`; the next new session loads it. Opt a machine out on the server: delete the row, `--disabled` pauses it, `--instances` narrows it. File modes are not stored, so plugin commands must call their interpreter explicitly.
+
 ## Setup
 
 ### Server
@@ -189,6 +193,10 @@ python -m hydra_cli hooks put NAME FILE --event EVENT [--matcher M]
                       # Policy hooks. Each row carries the script AND its
                       # settings.json wiring; `pull` installs both and is run
                       # by setup.sh just before the settings render.
+python -m hydra_cli plugins pull [--adopt] | list | delete NAME
+python -m hydra_cli plugins put NAME DIR [--instances a,b] [--disabled]
+                      # Claude Code plugins via the local `hydra` marketplace;
+                      # `pull` runs in setup.sh before the settings render.
 ```
 
 Global auth via `HYDRA_AUTH_TOKEN` and `HYDRA_URL` env vars.

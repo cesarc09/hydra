@@ -151,6 +151,15 @@ class HookWiring(BaseModel):
     timeout: int = Field(default=10, ge=1, le=600)
 
 
+class PluginUpsert(BaseModel):
+    """Body for PUT /api/config/plugins/{name}: a plugin's whole file tree as
+    {relative posix path: text}. File modes are not carried. `instances` has the
+    same client-filtered meaning as on HookUpsert."""
+    files: dict[str, str]
+    enabled: bool = True
+    instances: list[str] | None = None
+
+
 class HookUpsert(BaseModel):
     """Body for PUT /api/config/hooks/{name}: a policy hook's script and its
     settings.json wiring, upserted together.
